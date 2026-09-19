@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Heart,
   MessageCircle,
@@ -9,9 +9,17 @@ import {
   VolumeX,
   ShieldAlert,
   Star,
+  Settings,
   X,
   Check,
 } from "lucide-react";
+
+import {
+  submitWithdraw,
+  useAppSettings,
+  type WithdrawMethod,
+} from "@/lib/app-store";
+import { bn } from "@/lib/format";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -54,43 +62,77 @@ type FeedItem =
       sponsor: string;
     };
 
-const FEED: FeedItem[] = [
+const VIDEO_POOL = [
   {
-    id: "v1",
-    type: "video",
     url: "https://assets.mixkit.co/videos/preview/mixkit-tree-with-yellow-flowers-1173-large.mp4",
     user: "@nature_king",
     caption: "সুন্দর প্রকৃতির দৃশ্য! 🌿 #nature",
     likes: 1200,
   },
   {
-    id: "v2",
-    type: "video",
     url: "https://assets.mixkit.co/videos/preview/mixkit-mother-with-her-little-daughter-eating-apples-40149-large.mp4",
     user: "@family_time",
     caption: "সুন্দর বিকেল ❤️ #vlog",
     likes: 3400,
   },
   {
-    id: "ad1",
-    type: "forced_ad",
-    title: "স্পন্সরড এডভার্টাইজমেন্ট",
-    duration: 10,
-    sponsor: "Custom Sponsor",
-  },
-  {
-    id: "v3",
-    type: "video",
     url: "https://assets.mixkit.co/videos/preview/mixkit-a-girl-blowing-a-bubble-gum-bubble-41537-large.mp4",
     user: "@fun_videos",
     caption: "মজার ভিডিও 😂 #funny",
     likes: 890,
   },
+  {
+    url: "https://assets.mixkit.co/videos/preview/mixkit-tree-with-yellow-flowers-1173-large.mp4",
+    user: "@green_vibes",
+    caption: "সুন্দর প্রকৃতির দৃশ্য! 🌿 #nature",
+    likes: 2100,
+  },
+  {
+    url: "https://assets.mixkit.co/videos/preview/mixkit-mother-with-her-little-daughter-eating-apples-40149-large.mp4",
+    user: "@daily_moments",
+    caption: "সুন্দর বিকেল ❤️ #vlog",
+    likes: 1500,
+  },
+  {
+    url: "https://assets.mixkit.co/videos/preview/mixkit-a-girl-blowing-a-bubble-gum-bubble-41537-large.mp4",
+    user: "@bubble_gum",
+    caption: "মজার ভিডিও 😂 #funny",
+    likes: 760,
+  },
 ];
 
-function bn(n: number | string) {
-  const digits = "০১২৩৪৫৬৭৮৯".split("");
-  return String(n).replace(/\d/g, (d) => digits[Number(d)] ?? d);
+const TOTAL_VIDEOS = 60;
+const AD_DURATION = 10;
+
+const VIDEO_QUEUE = Array.from(
+  { length: Math.ceil(TOTAL_VIDEOS / VIDEO_POOL.length) },
+  () => VIDEO_POOL,
+)
+  .flat()
+  .slice(0, TOTAL_VIDEOS);
+
+/** Builds the feed: one forced ad after every N videos (N comes from the admin panel). */
+function buildFeed(adFrequency: number): FeedItem[] {
+  const items: FeedItem[] = [];
+  let videosSinceAd = 0;
+
+  VIDEO_QUEUE.forEach((video, index) => {
+    items.push({ id: `v-${index}`, type: "video", ...video });
+    videosSinceAd += 1;
+
+    if (videosSinceAd >= adFrequency) {
+      items.push({
+        id: `ad-${index}`,
+        type: "forced_ad",
+        title: "স্পন্সরড এডভার্টাইজমেন্ট",
+        duration: AD_DURATION,
+        sponsor: "WatchCoin Partner",
+      });
+      videosSinceAd = 0;
+    }
+  });
+
+  return items;
 }
 
 function WatchEarnApp() {
@@ -102,6 +144,11 @@ function WatchEarnApp() {
   const [rewarded, setRewarded] = useState<Record<string, boolean>>({});
   const [adLocked, setAdLocked] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const settings = useAppSettings();
+  const feed = useMemo(
+    () => buildFeed(settings.adFrequency),
+    [settings.adFrequency],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -140,7 +187,7 @@ function WatchEarnApp() {
     return () => observer.disconnect();
   }, []);
 
-  const current = FEED[currentIndex];
+  const current = feed[currentIndex];
   useEffect(() => {
     if (current?.type === "forced_ad" && !rewarded[current.id]) {
       setAdLocked(true);
@@ -169,6 +216,13 @@ function WatchEarnApp() {
               ৳{bn(balance.toFixed(2))}
             </span>
           </div>
+          <Link
+            to="/admin"
+            aria-label="Admin panel"
+            className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-surface/80 text-surface-foreground backdrop-blur transition-colors hover:bg-muted"
+          >
+            <Settings className="size-4" />
+          </Link>
           <button
             onClick={() => setShowWithdraw(true)}
             className="bg-brand-gradient flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95"
@@ -185,7 +239,7 @@ function WatchEarnApp() {
             adLocked ? "overflow-hidden" : "overflow-y-scroll"
           } [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
         >
-          {FEED.map((item, index) => (
+          {feed.map((item, index) => (
             <div
               key={item.id}
               data-index={index}
@@ -240,8 +294,15 @@ function WatchEarnApp() {
         {showWithdraw && (
           <WithdrawModal
             balance={balance}
+            notice={settings.notice}
             onClose={() => setShowWithdraw(false)}
             onSubmit={(amount, method, account) => {
+              submitWithdraw({
+                user: `User ${account.slice(-4)}`,
+                phone: account,
+                method,
+                amount,
+              });
               setBalance((b) => b - amount);
               setShowWithdraw(false);
               notify(
@@ -403,12 +464,14 @@ function VideoFeedCard({
 
 function WithdrawModal({
   balance,
+  notice,
   onClose,
   onSubmit,
 }: {
   balance: number;
+  notice: string;
   onClose: () => void;
-  onSubmit: (amount: number, method: string, account: string) => void;
+  onSubmit: (amount: number, method: WithdrawMethod, account: string) => void;
 }) {
   const [method, setMethod] = useState<"bkash" | "nagad">("bkash");
   const [account, setAccount] = useState("");
@@ -439,6 +502,11 @@ function WithdrawModal({
         onSubmit={submit}
         className="w-full rounded-t-3xl border border-border bg-card p-5 sm:rounded-3xl"
       >
+        {notice && (
+          <p className="mb-3 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning">
+            {notice}
+          </p>
+        )}
         <div className="flex items-center justify-between">
           <h3 className="text-base font-extrabold text-card-foreground">
             টাকা ক্যাশ আউট করুন

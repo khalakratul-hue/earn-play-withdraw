@@ -120,7 +120,7 @@ function buildFeed(adFrequency: number): FeedItem[] {
       items.push({
         id: `ad-${index}`,
         type: "forced_ad",
-        title: "স্পন্সরড অ্যোডভোার্টোোাইজমেন্ট",
+        title: "স্পন্সরড এডভার্টাইজমেন্ট",
         duration: AD_DURATION,
         sponsor: "WatchCoin Partner",
       });

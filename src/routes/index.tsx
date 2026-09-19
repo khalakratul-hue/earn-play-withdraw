@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Heart,
   MessageCircle,
@@ -9,9 +9,17 @@ import {
   VolumeX,
   ShieldAlert,
   Star,
+  Settings,
   X,
   Check,
 } from "lucide-react";
+
+import {
+  submitWithdraw,
+  useAppSettings,
+  type WithdrawMethod,
+} from "@/lib/app-store";
+import { bn } from "@/lib/format";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -102,6 +110,11 @@ function WatchEarnApp() {
   const [rewarded, setRewarded] = useState<Record<string, boolean>>({});
   const [adLocked, setAdLocked] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const settings = useAppSettings();
+  const feed = useMemo(
+    () => buildFeed(settings.adFrequency),
+    [settings.adFrequency],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -140,7 +153,7 @@ function WatchEarnApp() {
     return () => observer.disconnect();
   }, []);
 
-  const current = FEED[currentIndex];
+  const current = feed[currentIndex];
   useEffect(() => {
     if (current?.type === "forced_ad" && !rewarded[current.id]) {
       setAdLocked(true);

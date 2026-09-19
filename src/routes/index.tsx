@@ -10,6 +10,8 @@ import {
   ShieldAlert,
   Star,
   Settings,
+  Gift,
+  Plus,
   X,
   Check,
 } from "lucide-react";
@@ -44,6 +46,19 @@ export const Route = createFileRoute("/")({
 
 const POINTS_PER_TAKA = 100;
 const MIN_WITHDRAW = 50;
+const START_COINS = 100;
+
+const GIFTS = [
+  { emoji: "🌹", name: "গোলাপ", label: "গোলাপ ফুল 🌹", cost: 10 },
+  { emoji: "❤️", name: "লাভ", label: "ভালবাসা ❤️", cost: 30 },
+  { emoji: "👑", name: "মুকুট", label: "রাজমুকুট 👑", cost: 100 },
+];
+
+const COIN_PACKS = [
+  { coins: 100, taka: 20 },
+  { coins: 500, taka: 90 },
+  { coins: 1000, taka: 170 },
+];
 
 type FeedItem =
   | {
@@ -144,6 +159,9 @@ function WatchEarnApp() {
   const [rewarded, setRewarded] = useState<Record<string, boolean>>({});
   const [adLocked, setAdLocked] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [coins, setCoins] = useState(START_COINS);
+  const [giftFor, setGiftFor] = useState<string | null>(null);
+  const [showRecharge, setShowRecharge] = useState(false);
   const settings = useAppSettings();
   const feed = useMemo(
     () => buildFeed(settings.adFrequency),
@@ -205,31 +223,46 @@ function WatchEarnApp() {
     <main className="flex min-h-screen w-full items-center justify-center bg-background p-0 sm:p-6">
       <div className="relative h-screen w-full max-w-[430px] overflow-hidden bg-black sm:h-[860px] sm:rounded-[2.25rem] sm:border sm:border-border sm:shadow-2xl">
         {/* হেডার: পয়েন্ট, ব্যালেন্স, উইথড্র */}
-        <header className="absolute inset-x-0 top-0 z-30 flex items-center justify-between gap-2 bg-gradient-to-b from-black/80 to-transparent px-4 pb-8 pt-4">
-          <div className="flex items-center gap-2 rounded-full border border-border bg-surface/80 px-3 py-1.5 backdrop-blur">
-            <Star className="size-3.5 text-coin-glow" />
-            <span className="text-xs font-bold text-surface-foreground">
-              {bn(points)} পয়েন্ট
-            </span>
-            <span className="text-border">|</span>
-            <span className="text-xs font-bold text-coin-glow">
-              ৳{bn(balance.toFixed(2))}
-            </span>
+        <header className="absolute inset-x-0 top-0 z-30 flex flex-col gap-2 bg-gradient-to-b from-black/85 to-transparent px-4 pb-8 pt-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 rounded-full border border-border bg-surface/80 px-3 py-1.5 backdrop-blur">
+              <Star className="size-3.5 text-coin-glow" />
+              <span className="text-xs font-bold text-surface-foreground">
+                {bn(points)} পয়েন্ট
+              </span>
+              <span className="text-border">|</span>
+              <span className="text-xs font-bold text-coin-glow">
+                ৳{bn(balance.toFixed(2))}
+              </span>
+            </div>
+            <Link
+              to="/admin"
+              aria-label="Admin panel"
+              className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-surface/80 text-surface-foreground backdrop-blur transition-colors hover:bg-muted"
+            >
+              <Settings className="size-4" />
+            </Link>
+            <button
+              onClick={() => setShowWithdraw(true)}
+              className="bg-brand-gradient flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95"
+            >
+              <Wallet className="size-3.5" />
+              উইথড্র (৳{bn(MIN_WITHDRAW)})
+            </button>
           </div>
-          <Link
-            to="/admin"
-            aria-label="Admin panel"
-            className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-surface/80 text-surface-foreground backdrop-blur transition-colors hover:bg-muted"
-          >
-            <Settings className="size-4" />
-          </Link>
-          <button
-            onClick={() => setShowWithdraw(true)}
-            className="bg-brand-gradient flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95"
-          >
-            <Wallet className="size-3.5" />
-            উইথড্র (৳{bn(MIN_WITHDRAW)})
-          </button>
+
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 rounded-full border border-coin/30 bg-surface/70 px-3 py-1 text-xs font-bold text-coin-glow backdrop-blur">
+              🪙 {bn(coins)} কয়েন
+            </div>
+            <button
+              onClick={() => setShowRecharge(true)}
+              className="flex items-center gap-1 rounded-full bg-coin px-3 py-1 text-xs font-extrabold text-coin-foreground shadow-lg transition-transform active:scale-95"
+            >
+              <Plus className="size-3.5" />
+              কয়েন রিচার্জ
+            </button>
+          </div>
         </header>
 
         {/* ফিড */}
@@ -264,6 +297,7 @@ function WatchEarnApp() {
                   active={currentIndex === index}
                   muted={muted}
                   onToggleMute={() => setMuted((m) => !m)}
+                  onGift={() => setGiftFor(item.user)}
                   onEnded={() => {
                     award(item.id, 1);
                     notify("ভিডিও সম্পন্ন! +১ পয়েন্ট");
@@ -289,6 +323,40 @@ function WatchEarnApp() {
               {toast}
             </p>
           </div>
+        )}
+
+        {giftFor && (
+          <GiftModal
+            creator={giftFor}
+            coins={coins}
+            onClose={() => setGiftFor(null)}
+            onSend={(gift) => {
+              if (coins < gift.cost) {
+                notify(
+                  "আপনার পর্যাপ্ত কয়েন নেই! বিকাশ/নগদ দিয়ে কয়েন রিচার্জ করুন।",
+                );
+                setGiftFor(null);
+                setShowRecharge(true);
+                return;
+              }
+              setCoins((c) => c - gift.cost);
+              setGiftFor(null);
+              notify(`অভিনন্দন! আপনি ক্রিয়েটরকে একটি ${gift.label} পাঠিয়েছেন।`);
+            }}
+          />
+        )}
+
+        {showRecharge && (
+          <RechargeModal
+            onClose={() => setShowRecharge(false)}
+            onBuy={(pack) => {
+              setCoins((c) => c + pack.coins);
+              setShowRecharge(false);
+              notify(
+                `${bn(pack.coins)} কয়েন যোগ হয়েছে (৳${bn(pack.taka)} — ডেমো পেমেন্ট)`,
+              );
+            }}
+          />
         )}
 
         {showWithdraw && (
@@ -386,12 +454,14 @@ function VideoFeedCard({
   active,
   muted,
   onToggleMute,
+  onGift,
   onEnded,
 }: {
   video: Extract<FeedItem, { type: "video" }>;
   active: boolean;
   muted: boolean;
   onToggleMute: () => void;
+  onGift: () => void;
   onEnded: () => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -422,6 +492,15 @@ function VideoFeedCard({
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-gradient-to-t from-black/85 to-transparent" />
 
       <div className="absolute bottom-24 right-3 z-20 flex flex-col items-center gap-5">
+        <button
+          onClick={onGift}
+          className="flex flex-col items-center gap-1 text-coin-glow transition-transform active:scale-90"
+        >
+          <span className="bg-brand-gradient grid size-11 place-items-center rounded-full shadow-lg ring-2 ring-coin/50">
+            <Gift className="size-5 text-brand-foreground" />
+          </span>
+          <span className="text-[10px] font-bold">গিফট দিন</span>
+        </button>
         <button
           onClick={() => setLiked((l) => !l)}
           className="flex flex-col items-center gap-1 text-foreground transition-transform active:scale-90"
@@ -580,6 +659,120 @@ function WithdrawModal({
           {bn(POINTS_PER_TAKA)} পয়েন্ট = ৳{bn(1)} · রিকোয়েস্ট এডমিন রিভিউ করবে
         </p>
       </form>
+    </div>
+  );
+}
+
+type GiftOption = (typeof GIFTS)[number];
+type CoinPack = (typeof COIN_PACKS)[number];
+
+function GiftModal({
+  creator,
+  coins,
+  onClose,
+  onSend,
+}: {
+  creator: string;
+  coins: number;
+  onClose: () => void;
+  onSend: (gift: GiftOption) => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm">
+      <div className="animate-fade-in w-full rounded-t-3xl border-t border-border bg-card p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-sm font-bold text-foreground">
+              ক্রিয়েটরকে গিফট পাঠান
+            </h3>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {creator} · আপনার আছে {bn(coins)} কয়েন
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="grid size-8 place-items-center rounded-full bg-secondary text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 text-center">
+          {GIFTS.map((gift) => {
+            const affordable = coins >= gift.cost;
+            return (
+              <button
+                key={gift.name}
+                onClick={() => onSend(gift)}
+                className={`flex flex-col items-center rounded-2xl border bg-surface p-3 transition-colors active:scale-95 ${
+                  affordable
+                    ? "border-border hover:border-primary"
+                    : "border-border opacity-50"
+                }`}
+              >
+                <span className="text-3xl">{gift.emoji}</span>
+                <span className="mt-1 text-xs font-bold text-surface-foreground">
+                  {gift.name}
+                </span>
+                <span className="text-[10px] font-semibold text-coin-glow">
+                  {bn(gift.cost)} কয়েন
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RechargeModal({
+  onClose,
+  onBuy,
+}: {
+  onClose: () => void;
+  onBuy: (pack: CoinPack) => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm">
+      <div className="animate-fade-in w-full rounded-t-3xl border-t border-border bg-card p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-sm font-bold text-foreground">
+              বিকাশ/নগদ দিয়ে কয়েন কিনুন
+            </h3>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              এখন ডেমো মোড — আসল পেমেন্ট চালু হলে টাকা কাটা হবে।
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="grid size-8 place-items-center rounded-full bg-secondary text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 text-center">
+          {COIN_PACKS.map((pack) => (
+            <button
+              key={pack.coins}
+              onClick={() => onBuy(pack)}
+              className="flex flex-col items-center rounded-2xl border border-coin/30 bg-surface p-3 transition-colors hover:border-coin active:scale-95"
+            >
+              <span className="text-2xl">🪙</span>
+              <span className="mt-1 text-xs font-bold text-coin-glow">
+                {bn(pack.coins)}
+              </span>
+              <span className="text-[10px] font-semibold text-muted-foreground">
+                ৳{bn(pack.taka)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

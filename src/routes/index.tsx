@@ -297,6 +297,7 @@ function WatchEarnApp() {
                   active={currentIndex === index}
                   muted={muted}
                   onToggleMute={() => setMuted((m) => !m)}
+                  onGift={() => setGiftFor(item.user)}
                   onEnded={() => {
                     award(item.id, 1);
                     notify("ভিডিও সম্পন্ন! +১ পয়েন্ট");
@@ -322,6 +323,40 @@ function WatchEarnApp() {
               {toast}
             </p>
           </div>
+        )}
+
+        {giftFor && (
+          <GiftModal
+            creator={giftFor}
+            coins={coins}
+            onClose={() => setGiftFor(null)}
+            onSend={(gift) => {
+              if (coins < gift.cost) {
+                notify(
+                  "আপনার পর্যাপ্ত কয়েন নেই! বিকাশ/নগদ দিয়ে কয়েন রিচার্জ করুন।",
+                );
+                setGiftFor(null);
+                setShowRecharge(true);
+                return;
+              }
+              setCoins((c) => c - gift.cost);
+              setGiftFor(null);
+              notify(`অভিনন্দন! আপনি ক্রিয়েটরকে একটি ${gift.label} পাঠিয়েছেন।`);
+            }}
+          />
+        )}
+
+        {showRecharge && (
+          <RechargeModal
+            onClose={() => setShowRecharge(false)}
+            onBuy={(pack) => {
+              setCoins((c) => c + pack.coins);
+              setShowRecharge(false);
+              notify(
+                `${bn(pack.coins)} কয়েন যোগ হয়েছে (৳${bn(pack.taka)} — ডেমো পেমেন্ট)`,
+              );
+            }}
+          />
         )}
 
         {showWithdraw && (

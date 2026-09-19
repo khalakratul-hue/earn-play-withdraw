@@ -493,6 +493,15 @@ function VideoFeedCard({
 
       <div className="absolute bottom-24 right-3 z-20 flex flex-col items-center gap-5">
         <button
+          onClick={onGift}
+          className="flex flex-col items-center gap-1 text-coin-glow transition-transform active:scale-90"
+        >
+          <span className="bg-brand-gradient grid size-11 place-items-center rounded-full shadow-lg ring-2 ring-coin/50">
+            <Gift className="size-5 text-brand-foreground" />
+          </span>
+          <span className="text-[10px] font-bold">গিফট দিন</span>
+        </button>
+        <button
           onClick={() => setLiked((l) => !l)}
           className="flex flex-col items-center gap-1 text-foreground transition-transform active:scale-90"
         >

@@ -223,31 +223,46 @@ function WatchEarnApp() {
     <main className="flex min-h-screen w-full items-center justify-center bg-background p-0 sm:p-6">
       <div className="relative h-screen w-full max-w-[430px] overflow-hidden bg-black sm:h-[860px] sm:rounded-[2.25rem] sm:border sm:border-border sm:shadow-2xl">
         {/* হেডার: পয়েন্ট, ব্যালেন্স, উইথড্র */}
-        <header className="absolute inset-x-0 top-0 z-30 flex items-center justify-between gap-2 bg-gradient-to-b from-black/80 to-transparent px-4 pb-8 pt-4">
-          <div className="flex items-center gap-2 rounded-full border border-border bg-surface/80 px-3 py-1.5 backdrop-blur">
-            <Star className="size-3.5 text-coin-glow" />
-            <span className="text-xs font-bold text-surface-foreground">
-              {bn(points)} পয়েন্ট
-            </span>
-            <span className="text-border">|</span>
-            <span className="text-xs font-bold text-coin-glow">
-              ৳{bn(balance.toFixed(2))}
-            </span>
+        <header className="absolute inset-x-0 top-0 z-30 flex flex-col gap-2 bg-gradient-to-b from-black/85 to-transparent px-4 pb-8 pt-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 rounded-full border border-border bg-surface/80 px-3 py-1.5 backdrop-blur">
+              <Star className="size-3.5 text-coin-glow" />
+              <span className="text-xs font-bold text-surface-foreground">
+                {bn(points)} পয়েন্ট
+              </span>
+              <span className="text-border">|</span>
+              <span className="text-xs font-bold text-coin-glow">
+                ৳{bn(balance.toFixed(2))}
+              </span>
+            </div>
+            <Link
+              to="/admin"
+              aria-label="Admin panel"
+              className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-surface/80 text-surface-foreground backdrop-blur transition-colors hover:bg-muted"
+            >
+              <Settings className="size-4" />
+            </Link>
+            <button
+              onClick={() => setShowWithdraw(true)}
+              className="bg-brand-gradient flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95"
+            >
+              <Wallet className="size-3.5" />
+              উইথড্র (৳{bn(MIN_WITHDRAW)})
+            </button>
           </div>
-          <Link
-            to="/admin"
-            aria-label="Admin panel"
-            className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-surface/80 text-surface-foreground backdrop-blur transition-colors hover:bg-muted"
-          >
-            <Settings className="size-4" />
-          </Link>
-          <button
-            onClick={() => setShowWithdraw(true)}
-            className="bg-brand-gradient flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95"
-          >
-            <Wallet className="size-3.5" />
-            উইথড্র (৳{bn(MIN_WITHDRAW)})
-          </button>
+
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 rounded-full border border-coin/30 bg-surface/70 px-3 py-1 text-xs font-bold text-coin-glow backdrop-blur">
+              🪙 {bn(coins)} কয়েন
+            </div>
+            <button
+              onClick={() => setShowRecharge(true)}
+              className="flex items-center gap-1 rounded-full bg-coin px-3 py-1 text-xs font-extrabold text-coin-foreground shadow-lg transition-transform active:scale-95"
+            >
+              <Plus className="size-3.5" />
+              কয়েন রিচার্জ
+            </button>
+          </div>
         </header>
 
         {/* ফিড */}

@@ -65,7 +65,7 @@ function AdminPanel() {
 
   const applyFrequency = () => {
     if (saveAdFrequency(Number(freqDraft))) {
-      notify("এড ফ্রিকোয়েন্সি সেভ করাা হয়েছে।");
+      notify("এড ফ্রিকোয়েন্সি সেভ করা হয়েছে।");
     } else {
       notify(`সঠিক নম্বর দিন (${bn(MIN_AD_FREQUENCY)}–${bn(MAX_AD_FREQUENCY)}).`);
     }
@@ -73,19 +73,19 @@ function AdminPanel() {
 
   const applyNotice = () => {
     saveNotice(noticeDraft);
-    notify("ইউজার পেমেন্ট বার্তা আপডেট করাা হয়েছে।");
+    notify("ইউজার পেমেন্ট বার্তা আপডেট করা হয়েছে।");
   };
 
   const approve = (request: WithdrawRequest) => {
     setRequestStatus(request.id, "approved");
     notify(
-      `${taka(request.amount)} পেমেন্ট সফলভাবে এপ্রুভ করাা হয়েছে (${request.method})।`,
+      `${taka(request.amount)} পেমেন্ট সফলভাবে এপ্রুভ করা হয়েছে (${request.method})।`,
     );
   };
 
   const reject = (request: WithdrawRequest) => {
     setRequestStatus(request.id, "rejected");
-    notify(`উইথড্র রিকোয়েস্টটি রিজেক্ট করাা হয়েছে।`);
+    notify(`উইথড্র রিকোয়েস্টটি রিজেক্ট করা হয়েছে।`);
   };
 
   const pending = settings.requests.filter((r) => r.status === "pending");

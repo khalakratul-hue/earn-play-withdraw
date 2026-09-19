@@ -46,6 +46,19 @@ export const Route = createFileRoute("/")({
 
 const POINTS_PER_TAKA = 100;
 const MIN_WITHDRAW = 50;
+const START_COINS = 100;
+
+const GIFTS = [
+  { emoji: "🌹", name: "গোলাপ", label: "গোলাপ ফুল 🌹", cost: 10 },
+  { emoji: "❤️", name: "লাভ", label: "ভালবাসা ❤️", cost: 30 },
+  { emoji: "👑", name: "মুকুট", label: "রাজমুকুট 👑", cost: 100 },
+];
+
+const COIN_PACKS = [
+  { coins: 100, taka: 20 },
+  { coins: 500, taka: 90 },
+  { coins: 1000, taka: 170 },
+];
 
 type FeedItem =
   | {

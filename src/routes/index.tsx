@@ -662,3 +662,117 @@ function WithdrawModal({
     </div>
   );
 }
+
+type GiftOption = (typeof GIFTS)[number];
+type CoinPack = (typeof COIN_PACKS)[number];
+
+function GiftModal({
+  creator,
+  coins,
+  onClose,
+  onSend,
+}: {
+  creator: string;
+  coins: number;
+  onClose: () => void;
+  onSend: (gift: GiftOption) => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm">
+      <div className="animate-fade-in w-full rounded-t-3xl border-t border-border bg-card p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-sm font-bold text-foreground">
+              ক্রিয়েটরকে গিফট পাঠান
+            </h3>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {creator} · আপনার আছে {bn(coins)} কয়েন
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="grid size-8 place-items-center rounded-full bg-secondary text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 text-center">
+          {GIFTS.map((gift) => {
+            const affordable = coins >= gift.cost;
+            return (
+              <button
+                key={gift.name}
+                onClick={() => onSend(gift)}
+                className={`flex flex-col items-center rounded-2xl border bg-surface p-3 transition-colors active:scale-95 ${
+                  affordable
+                    ? "border-border hover:border-primary"
+                    : "border-border opacity-50"
+                }`}
+              >
+                <span className="text-3xl">{gift.emoji}</span>
+                <span className="mt-1 text-xs font-bold text-surface-foreground">
+                  {gift.name}
+                </span>
+                <span className="text-[10px] font-semibold text-coin-glow">
+                  {bn(gift.cost)} কয়েন
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RechargeModal({
+  onClose,
+  onBuy,
+}: {
+  onClose: () => void;
+  onBuy: (pack: CoinPack) => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm">
+      <div className="animate-fade-in w-full rounded-t-3xl border-t border-border bg-card p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-sm font-bold text-foreground">
+              বিকাশ/নগদ দিয়ে কয়েন কিনুন
+            </h3>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              এখন ডেমো মোড — আসল পেমেন্ট চালু হলে টাকা কাটা হবে।
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="grid size-8 place-items-center rounded-full bg-secondary text-muted-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 text-center">
+          {COIN_PACKS.map((pack) => (
+            <button
+              key={pack.coins}
+              onClick={() => onBuy(pack)}
+              className="flex flex-col items-center rounded-2xl border border-coin/30 bg-surface p-3 transition-colors hover:border-coin active:scale-95"
+            >
+              <span className="text-2xl">🪙</span>
+              <span className="mt-1 text-xs font-bold text-coin-glow">
+                {bn(pack.coins)}
+              </span>
+              <span className="text-[10px] font-semibold text-muted-foreground">
+                ৳{bn(pack.taka)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

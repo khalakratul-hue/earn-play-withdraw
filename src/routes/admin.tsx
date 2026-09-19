@@ -65,7 +65,7 @@ function AdminPanel() {
 
   const applyFrequency = () => {
     if (saveAdFrequency(Number(freqDraft))) {
-      notify("এড ফ্রিকোয়েন্সি সেভ কর করা হেছে।");
+      notify("এড ফ্রিকোয়েন্সি সেভ করাা হয়েছে।");
     } else {
       notify(`সঠিক নম্বর দিন (${bn(MIN_AD_FREQUENCY)}–${bn(MAX_AD_FREQUENCY)}).`);
     }
@@ -73,19 +73,19 @@ function AdminPanel() {
 
   const applyNotice = () => {
     saveNotice(noticeDraft);
-    notify("ইউজার পেমেন্ট বার্তা আপডেট কর করা হেছে।");
+    notify("ইউজার পেমেন্ট বার্তা আপডেট করাা হয়েছে।");
   };
 
   const approve = (request: WithdrawRequest) => {
     setRequestStatus(request.id, "approved");
     notify(
-      `${taka(request.amount)} পেমেন্ট সফলভাবে এপ্রুভ কর করা হেছে (${request.method})।`,
+      `${taka(request.amount)} পেমেন্ট সফলভাবে এপ্রুভ করাা হয়েছে (${request.method})।`,
     );
   };
 
   const reject = (request: WithdrawRequest) => {
     setRequestStatus(request.id, "rejected");
-    notify(`উইথড্র রিকোয়েস্টটি রিজেক্ট কর করা হেছে।`);
+    notify(`উইথড্র রিকোয়েস্টটি রিজেক্ট করাা হয়েছে।`);
   };
 
   const pending = settings.requests.filter((r) => r.status === "pending");
@@ -136,7 +136,7 @@ function AdminPanel() {
           />
           <StatCard
             icon={<CheckCircle2 className="size-4" />}
-            label="পরিশোধ কর হেছে"
+            label="পরিশোধ করা হয়েছে"
             value={taka(paidTotal)}
             hint={`${bn(approved.length)} টি অনুমোদিত`}
             tone="success"
@@ -306,8 +306,8 @@ function AdminPanel() {
                         ) : (
                           <span className="text-[10px] text-muted-foreground">
                             {request.status === "approved"
-                              ? "পরিশোধ কর হেছে"
-                              : "রিজেক্ট কর হেছে"}
+                              ? "পরিশোধ করা হয়েছে"
+                              : "রিজেক্ট করা হয়েছে"}
                           </span>
                         )}
                       </div>

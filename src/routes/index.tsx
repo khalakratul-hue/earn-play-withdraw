@@ -454,12 +454,14 @@ function VideoFeedCard({
   active,
   muted,
   onToggleMute,
+  onGift,
   onEnded,
 }: {
   video: Extract<FeedItem, { type: "video" }>;
   active: boolean;
   muted: boolean;
   onToggleMute: () => void;
+  onGift: () => void;
   onEnded: () => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);

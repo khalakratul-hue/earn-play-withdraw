@@ -146,6 +146,9 @@ function WatchEarnApp() {
   const [rewarded, setRewarded] = useState<Record<string, boolean>>({});
   const [adLocked, setAdLocked] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [coins, setCoins] = useState(START_COINS);
+  const [giftFor, setGiftFor] = useState<string | null>(null);
+  const [showRecharge, setShowRecharge] = useState(false);
   const settings = useAppSettings();
   const feed = useMemo(
     () => buildFeed(settings.adFrequency),

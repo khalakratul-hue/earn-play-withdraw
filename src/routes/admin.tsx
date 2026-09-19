@@ -305,7 +305,9 @@ function AdminPanel() {
                           </>
                         ) : (
                           <span className="text-[10px] text-muted-foreground">
-                           处理 সম্পন্ন
+                            {request.status === "approved"
+                              ? "পরিশোধ কর হেছে"
+                              : "রিজেক্ট কর হেছে"}
                           </span>
                         )}
                       </div>
@@ -329,13 +331,14 @@ function AdminPanel() {
   );
 }
 
-type PanelTone = "coin" | "primary" | "success" | "accent";
+type PanelTone = "coin" | "primary" | "success" | "accent" | "warning";
 
 const PANEL_TONE: Record<PanelTone, string> = {
   coin: "text-coin",
   primary: "text-primary",
   success: "text-success",
   accent: "text-accent",
+  warning: "text-warning",
 };
 
 function Panel({

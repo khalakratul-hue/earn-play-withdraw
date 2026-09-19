@@ -10,6 +10,8 @@ import {
   ShieldAlert,
   Star,
   Settings,
+  Gift,
+  Plus,
   X,
   Check,
 } from "lucide-react";

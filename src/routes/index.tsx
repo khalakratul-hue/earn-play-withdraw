@@ -89,7 +89,8 @@ const FEED: FeedItem[] = [
 ];
 
 function bn(n: number | string) {
-  return String(n).replace(/\d/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]);
+  const digits = "০১২৩৪৫৬৭৮৯".split("");
+  return String(n).replace(/\d/g, (d) => digits[Number(d)] ?? d);
 }
 
 function WatchEarnApp() {

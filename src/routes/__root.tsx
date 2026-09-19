@@ -77,11 +77,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { title: "WatchCoin — ভিডিও দেক়ে টাকো ইনকাম" },
+      {
+        name: "description",
+        content:
+          "WatchCoin: শরট ভিডিও দেক়ে পয়েন্ট জমান এবং বিকোশ বো নগদে ক্যোশ আউট করুন।",
+      },
+      { name: "author", content: "WatchCoin" },
+      { property: "og:title", content: "WatchCoin — ভিডিও দেক়ে টাকো ইনকাম" },
+      {
+        property: "og:description",
+        content: "ভিডিও দেক়ে পয়েন্ট জমান, বিকোশ ও নগদে ক্যোশ আউট করুন।",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@Lovable" },
@@ -90,6 +97,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         rel: "stylesheet",
         href: appCss,
+      },
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap",
       },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
     ],

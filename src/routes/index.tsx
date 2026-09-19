@@ -210,6 +210,13 @@ function WatchEarnApp() {
               ৳{bn(balance.toFixed(2))}
             </span>
           </div>
+          <Link
+            to="/admin"
+            aria-label="Admin panel"
+            className="grid size-9 shrink-0 place-items-center rounded-full border border-border bg-surface/80 text-surface-foreground backdrop-blur transition-colors hover:bg-muted"
+          >
+            <Settings className="size-4" />
+          </Link>
           <button
             onClick={() => setShowWithdraw(true)}
             className="bg-brand-gradient flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95"
@@ -226,7 +233,7 @@ function WatchEarnApp() {
             adLocked ? "overflow-hidden" : "overflow-y-scroll"
           } [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
         >
-          {FEED.map((item, index) => (
+          {feed.map((item, index) => (
             <div
               key={item.id}
               data-index={index}
@@ -281,8 +288,15 @@ function WatchEarnApp() {
         {showWithdraw && (
           <WithdrawModal
             balance={balance}
+            notice={settings.notice}
             onClose={() => setShowWithdraw(false)}
             onSubmit={(amount, method, account) => {
+              submitWithdraw({
+                user: `User ${account.slice(-4)}`,
+                phone: account,
+                method,
+                amount,
+              });
               setBalance((b) => b - amount);
               setShowWithdraw(false);
               notify(
@@ -444,12 +458,14 @@ function VideoFeedCard({
 
 function WithdrawModal({
   balance,
+  notice,
   onClose,
   onSubmit,
 }: {
   balance: number;
+  notice: string;
   onClose: () => void;
-  onSubmit: (amount: number, method: string, account: string) => void;
+  onSubmit: (amount: number, method: WithdrawMethod, account: string) => void;
 }) {
   const [method, setMethod] = useState<"bkash" | "nagad">("bkash");
   const [account, setAccount] = useState("");
@@ -480,6 +496,11 @@ function WithdrawModal({
         onSubmit={submit}
         className="w-full rounded-t-3xl border border-border bg-card p-5 sm:rounded-3xl"
       >
+        {notice && (
+          <p className="mb-3 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning">
+            {notice}
+          </p>
+        )}
         <div className="flex items-center justify-between">
           <h3 className="text-base font-extrabold text-card-foreground">
             টাকা ক্যাশ আউট করুন

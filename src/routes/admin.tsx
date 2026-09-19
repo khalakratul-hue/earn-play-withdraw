@@ -138,7 +138,7 @@ function AdminPanel() {
             icon={<CheckCircle2 className="size-4" />}
             label="পরিশোধ কর হেছে"
             value={taka(paidTotal)}
-            hint={`${bn(approved.length)} টি এপ্রুভড`}
+            hint={`${bn(approved.length)} টি অনুমোদিত`}
             tone="success"
           />
           <StatCard
@@ -201,7 +201,7 @@ function AdminPanel() {
               disabled={freqDraft === String(settings.adFrequency)}
               className="bg-brand-gradient rounded-xl px-4 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
             >
-              সেভ করুন্
+              সেভ করুন
             </button>
           </Panel>
 
@@ -229,7 +229,7 @@ function AdminPanel() {
               disabled={noticeDraft.trim() === settings.notice}
               className="bg-brand-gradient w-fit rounded-xl px-4 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
             >
-              সেভ করুন্
+              সেভ করুন
             </button>
           </Panel>
         </div>
@@ -292,7 +292,7 @@ function AdminPanel() {
                               className="flex items-center gap-1 rounded-lg bg-success px-3 py-1 text-[10px] font-bold text-success-foreground transition-transform active:scale-95 hover:brightness-110"
                             >
                               <CheckCircle2 className="size-3" />
-                              পেমেন্ট সম্পন্ন করুন্
+                              পেমেন্ট সম্পন্ন করুন
                             </button>
                             <button
                               type="button"

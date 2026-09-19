@@ -75,23 +75,13 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
-      { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "WatchCoin — ভিডিও দেক়ে টাকো ইনকাম" },
-      {
-        name: "description",
-        content:
-          "WatchCoin: শরট ভিডিও দেক়ে পয়েন্ট জমান এবং বিকোশ বো নগদে ক্যোশ আউট করুন।",
-      },
+      { title: "WatchCoin — ভিডিও দেখে টাকা ইনকাম" },
+      { name: "description", content: "শর্ট ভিডিও দেখুন, পয়েন্ট জমান এবং বিকাশ বা নগদে সর্বনিম্ন ৫০ টাকা উইথড্র করুন।" },
       { name: "author", content: "WatchCoin" },
-      { property: "og:title", content: "WatchCoin — ভিডিও দেক়ে টাকো ইনকাম" },
-      {
-        property: "og:description",
-        content: "ভিডিও দেক়ে পয়েন্ট জমান, বিকোশ ও নগদে ক্যোশ আউট করুন।",
-      },
+      { property: "og:title", content: "WatchCoin — ভিডিও দেখে টাকা ইনকাম" },
+      { property: "og:description", content: "ভিডিও দেখে পয়েন্ট জমান, বিকাশ ও নগদে ক্যাশ আউট করুন।" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
       {

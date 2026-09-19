@@ -101,7 +101,7 @@ const VIDEO_POOL = [
   },
 ];
 
-const TOTAL_VIDEOS = 30;
+const TOTAL_VIDEOS = 60;
 const AD_DURATION = 10;
 
 const VIDEO_QUEUE = Array.from(
@@ -111,12 +111,16 @@ const VIDEO_QUEUE = Array.from(
   .flat()
   .slice(0, TOTAL_VIDEOS);
 
-/** Builds the feed, inserting one forced ad every N videos (N comes from the admin panel). */
+/** Builds the feed: one forced ad after every N videos (N comes from the admin panel). */
 function buildFeed(adFrequency: number): FeedItem[] {
   const items: FeedItem[] = [];
+  let videosSinceAd = 0;
+
   VIDEO_QUEUE.forEach((video, index) => {
     items.push({ id: `v-${index}`, type: "video", ...video });
-    if ((index + 1) % adFrequency === 0) {
+    videosSinceAd += 1;
+
+    if (videosSinceAd >= adFrequency) {
       items.push({
         id: `ad-${index}`,
         type: "forced_ad",
@@ -124,8 +128,10 @@ function buildFeed(adFrequency: number): FeedItem[] {
         duration: AD_DURATION,
         sponsor: "WatchCoin Partner",
       });
+      videosSinceAd = 0;
     }
   });
+
   return items;
 }
 

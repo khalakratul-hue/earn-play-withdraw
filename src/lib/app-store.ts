@@ -10,8 +10,12 @@ export const MAX_AD_FREQUENCY = 100;
 export const DEFAULT_NOTICE =
   "পেমেন্ট পেতে কোনো সমস্যা হলে সাপোর্ট গ্রুপে যোগাযোগ করুন।";
 
+export const CHECKIN_REWARD = 10;
+export const REFERRAL_REWARD = 50;
+
 export type WithdrawMethod = "bKash" | "Nagad";
 export type WithdrawStatus = "pending" | "approved" | "rejected";
+export type UploadStatus = "pending" | "approved" | "rejected";
 
 export interface WithdrawRequest {
   id: string;
@@ -23,10 +27,34 @@ export interface WithdrawRequest {
   createdAt: number;
 }
 
+export interface VideoComment {
+  id: string;
+  videoId: string;
+  user: string;
+  text: string;
+  createdAt: number;
+}
+
+export interface UploadedVideo {
+  id: string;
+  user: string;
+  caption: string;
+  url: string;
+  status: UploadStatus;
+  createdAt: number;
+}
+
 export interface AppSettings {
   adFrequency: number;
   notice: string;
   requests: WithdrawRequest[];
+  comments: VideoComment[];
+  uploads: UploadedVideo[];
+  uploadsEnabled: boolean;
+  referralCode: string;
+  referrals: number;
+  lastCheckIn: string;
+  checkInStreak: number;
 }
 
 const SEED_REQUESTS: WithdrawRequest[] = [
@@ -50,10 +78,34 @@ const SEED_REQUESTS: WithdrawRequest[] = [
   },
 ];
 
+const SEED_COMMENTS: VideoComment[] = [
+  {
+    id: "c-1",
+    videoId: "v-0",
+    user: "@shanto",
+    text: "দুর্দান্ত ভিডিও! আরো চাই।",
+    createdAt: Date.parse("2026-09-19T05:00:00Z"),
+  },
+  {
+    id: "c-2",
+    videoId: "v-0",
+    user: "@mitu",
+    text: "খুব সুন্দর লাগলো।",
+    createdAt: Date.parse("2026-09-19T05:30:00Z"),
+  },
+];
+
 const DEFAULTS: AppSettings = {
   adFrequency: DEFAULT_AD_FREQUENCY,
   notice: DEFAULT_NOTICE,
   requests: SEED_REQUESTS,
+  comments: SEED_COMMENTS,
+  uploads: [],
+  uploadsEnabled: true,
+  referralCode: "WC-DEMO",
+  referrals: 0,
+  lastCheckIn: "",
+  checkInStreak: 0,
 };
 
 function clampFrequency(value: unknown): number {
@@ -82,19 +134,79 @@ function normalizeRequest(value: unknown): WithdrawRequest | null {
   };
 }
 
+function normalizeComment(value: unknown): VideoComment | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw["id"] !== "string" || typeof raw["text"] !== "string")
+    return null;
+  return {
+    id: raw["id"],
+    videoId: typeof raw["videoId"] === "string" ? raw["videoId"] : "",
+    user: typeof raw["user"] === "string" ? raw["user"] : "@user",
+    text: raw["text"],
+    createdAt: Number(raw["createdAt"]) || 0,
+  };
+}
+
+function normalizeUpload(value: unknown): UploadedVideo | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw["id"] !== "string" || typeof raw["url"] !== "string")
+    return null;
+  return {
+    id: raw["id"],
+    user: typeof raw["user"] === "string" ? raw["user"] : "@me",
+    caption: typeof raw["caption"] === "string" ? raw["caption"] : "",
+    url: raw["url"],
+    status:
+      raw["status"] === "approved"
+        ? "approved"
+        : raw["status"] === "rejected"
+          ? "rejected"
+          : "pending",
+    createdAt: Number(raw["createdAt"]) || 0,
+  };
+}
+
+function makeReferralCode(): string {
+  return `WC-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+}
+
 function normalize(value: unknown): AppSettings {
   if (!value || typeof value !== "object") return DEFAULTS;
   const raw = value as Record<string, unknown>;
-  const stored = raw["requests"];
-  const requests = Array.isArray(stored)
-    ? stored
+  const storedRequests = raw["requests"];
+  const requests = Array.isArray(storedRequests)
+    ? storedRequests
         .map(normalizeRequest)
         .filter((r): r is WithdrawRequest => r !== null)
     : SEED_REQUESTS;
+  const storedComments = raw["comments"];
+  const comments = Array.isArray(storedComments)
+    ? storedComments
+        .map(normalizeComment)
+        .filter((c): c is VideoComment => c !== null)
+    : SEED_COMMENTS;
+  const storedUploads = raw["uploads"];
+  const uploads = Array.isArray(storedUploads)
+    ? storedUploads
+        .map(normalizeUpload)
+        .filter((u): u is UploadedVideo => u !== null)
+    : [];
   return {
     adFrequency: clampFrequency(raw["adFrequency"]),
     notice: typeof raw["notice"] === "string" ? raw["notice"] : DEFAULT_NOTICE,
     requests,
+    comments,
+    uploads,
+    uploadsEnabled: raw["uploadsEnabled"] !== false,
+    referralCode:
+      typeof raw["referralCode"] === "string" && raw["referralCode"].length > 0
+        ? raw["referralCode"]
+        : makeReferralCode(),
+    referrals: Number(raw["referrals"]) || 0,
+    lastCheckIn: typeof raw["lastCheckIn"] === "string" ? raw["lastCheckIn"] : "",
+    checkInStreak: Number(raw["checkInStreak"]) || 0,
   };
 }
 
@@ -102,7 +214,7 @@ function readStore(): AppSettings {
   if (typeof window === "undefined") return DEFAULTS;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULTS;
+    if (!raw) return { ...DEFAULTS, referralCode: makeReferralCode() };
     return normalize(JSON.parse(raw));
   } catch {
     return DEFAULTS;
@@ -218,4 +330,88 @@ export function submitWithdraw(input: {
       ...current.requests,
     ],
   }));
+}
+
+/** Adds a comment to a video and returns it. */
+export function addComment(videoId: string, text: string, user = "@আপনি") {
+  const trimmed = text.trim().slice(0, 240);
+  if (trimmed.length === 0) return;
+  update((current) => ({
+    ...current,
+    comments: [
+      ...current.comments,
+      {
+        id: `c-${Date.now().toString(36)}`,
+        videoId,
+        user,
+        text: trimmed,
+        createdAt: Date.now(),
+      },
+    ],
+  }));
+}
+
+export function deleteComment(id: string) {
+  update((current) => ({
+    ...current,
+    comments: current.comments.filter((comment) => comment.id !== id),
+  }));
+}
+
+export function submitUpload(input: { caption: string; url: string; user: string }) {
+  update((current) => ({
+    ...current,
+    uploads: [
+      {
+        id: `up-${Date.now().toString(36)}`,
+        user: input.user,
+        caption: input.caption.trim().slice(0, 160),
+        url: input.url,
+        status: "pending",
+        createdAt: Date.now(),
+      },
+      ...current.uploads,
+    ],
+  }));
+}
+
+export function setUploadStatus(id: string, status: UploadStatus) {
+  update((current) => ({
+    ...current,
+    uploads: current.uploads.map((upload) =>
+      upload.id === id ? { ...upload, status } : upload,
+    ),
+  }));
+}
+
+export function setUploadsEnabled(enabled: boolean) {
+  update((current) => ({ ...current, uploadsEnabled: enabled }));
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function isCheckedInToday(settings: AppSettings): boolean {
+  return settings.lastCheckIn === today();
+}
+
+/** Daily check-in: awards points once per calendar day and keeps a streak. */
+export function claimCheckIn(): { ok: boolean; reward: number; streak: number } {
+  const current = getSnapshot();
+  if (current.lastCheckIn === today()) {
+    return { ok: false, reward: 0, streak: current.checkInStreak };
+  }
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const streak = current.lastCheckIn === yesterday ? current.checkInStreak + 1 : 1;
+  write({ ...current, lastCheckIn: today(), checkInStreak: streak });
+  return { ok: true, reward: CHECKIN_REWARD, streak };
+}
+
+/** Records a successful referral (a friend opened the app with this code). */
+export function addReferral(): number {
+  const current = getSnapshot();
+  const referrals = current.referrals + 1;
+  write({ ...current, referrals });
+  return referrals;
 }

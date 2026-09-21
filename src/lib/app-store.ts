@@ -44,12 +44,23 @@ export interface UploadedVideo {
   createdAt: number;
 }
 
+export interface GiftRecord {
+  id: string;
+  gift: string;
+  emoji: string;
+  coins: number;
+  creator: string;
+  sender: string;
+  createdAt: number;
+}
+
 export interface AppSettings {
   adFrequency: number;
   notice: string;
   requests: WithdrawRequest[];
   comments: VideoComment[];
   uploads: UploadedVideo[];
+  gifts: GiftRecord[];
   uploadsEnabled: boolean;
   referralCode: string;
   referrals: number;
@@ -101,6 +112,7 @@ const DEFAULTS: AppSettings = {
   requests: SEED_REQUESTS,
   comments: SEED_COMMENTS,
   uploads: [],
+  gifts: [],
   uploadsEnabled: true,
   referralCode: "WC-DEMO",
   referrals: 0,
@@ -168,6 +180,21 @@ function normalizeUpload(value: unknown): UploadedVideo | null {
   };
 }
 
+function normalizeGift(value: unknown): GiftRecord | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw["id"] !== "string") return null;
+  return {
+    id: raw["id"],
+    gift: typeof raw["gift"] === "string" ? raw["gift"] : "গিফট",
+    emoji: typeof raw["emoji"] === "string" ? raw["emoji"] : "🎁",
+    coins: Number(raw["coins"]) || 0,
+    creator: typeof raw["creator"] === "string" ? raw["creator"] : "@creator",
+    sender: typeof raw["sender"] === "string" ? raw["sender"] : "@আপনি",
+    createdAt: Number(raw["createdAt"]) || 0,
+  };
+}
+
 function makeReferralCode(): string {
   return `WC-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 }
@@ -193,12 +220,17 @@ function normalize(value: unknown): AppSettings {
         .map(normalizeUpload)
         .filter((u): u is UploadedVideo => u !== null)
     : [];
+  const storedGifts = raw["gifts"];
+  const gifts = Array.isArray(storedGifts)
+    ? storedGifts.map(normalizeGift).filter((g): g is GiftRecord => g !== null)
+    : [];
   return {
     adFrequency: clampFrequency(raw["adFrequency"]),
     notice: typeof raw["notice"] === "string" ? raw["notice"] : DEFAULT_NOTICE,
     requests,
     comments,
     uploads,
+    gifts,
     uploadsEnabled: raw["uploadsEnabled"] !== false,
     referralCode:
       typeof raw["referralCode"] === "string" && raw["referralCode"].length > 0
@@ -414,4 +446,29 @@ export function addReferral(): number {
   const referrals = current.referrals + 1;
   write({ ...current, referrals });
   return referrals;
+}
+
+/** Records a sent gift for the history page and the creator dashboard. */
+export function recordGift(input: {
+  gift: string;
+  emoji: string;
+  coins: number;
+  creator: string;
+  sender?: string;
+}) {
+  update((current) => ({
+    ...current,
+    gifts: [
+      {
+        id: `g-${Date.now().toString(36)}`,
+        gift: input.gift,
+        emoji: input.emoji,
+        coins: input.coins,
+        creator: input.creator,
+        sender: input.sender ?? "@আপনি",
+        createdAt: Date.now(),
+      },
+      ...current.gifts,
+    ],
+  }));
 }

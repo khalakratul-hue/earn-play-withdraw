@@ -60,7 +60,7 @@ export const Route = createFileRoute("/")({
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: HomeScreen;
+  component: HomeScreen,
 });
 
 const POINTS_PER_TAKA = 100;

@@ -89,7 +89,7 @@ export function AdminPanel({
   return (
     <div className="min-h-screen bg-background px-4 py-6 font-sans text-foreground sm:px-6">
       <div className="mx-auto max-w-5xl space-y-5">
-        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border border-border bg-card p-4">
+        <header className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-2.5">
             <span className="bg-brand-gradient grid size-9 shrink-0 place-items-center rounded-xl">
               <Settings className="size-4.5 text-brand-foreground" />

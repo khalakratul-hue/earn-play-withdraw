@@ -321,8 +321,8 @@ function WatchEarnApp() {
   };
 
   return (
-    <main className="flex min-h-screen w-full items-center justify-center bg-background p-0 sm:p-6">
-      <div className="relative h-screen w-full max-w-[430px] overflow-hidden bg-black sm:h-[860px] sm:rounded-[2.25rem] sm:border sm:border-border sm:shadow-2xl">
+    <main className="flex min-h-dvh w-full flex-col items-center justify-between overflow-x-hidden bg-background text-foreground">
+      <div className="relative flex h-dvh min-h-0 w-full max-w-md flex-none flex-col overflow-hidden bg-background shadow-2xl">
         {/* হেডার: পয়েন্ট, ব্যালেন্স, কয়েন */}
         <header className="absolute inset-x-0 top-0 z-30 flex flex-col gap-2 bg-gradient-to-b from-black/90 to-transparent px-3 pb-8 pt-4">
           <div className="flex items-center justify-between gap-2">

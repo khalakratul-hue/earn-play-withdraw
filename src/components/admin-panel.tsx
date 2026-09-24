@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
+  BadgeDollarSign,
   CheckCircle2,
   DollarSign,
   LogOut,
@@ -20,6 +21,7 @@ import {
   MIN_AD_FREQUENCY,
   deleteComment,
   saveAdFrequency,
+  saveAdUnitId,
   saveNotice,
   setRequestStatus,
   setUploadStatus,
@@ -40,6 +42,7 @@ export function AdminPanel({
   const [toast, setToast] = useState<string | null>(null);
   const [freqDraft, setFreqDraft] = useState(String(settings.adFrequency));
   const [noticeDraft, setNoticeDraft] = useState(settings.notice);
+  const [adUnitDraft, setAdUnitDraft] = useState("");
 
   useEffect(() => {
     setFreqDraft(String(settings.adFrequency));
@@ -65,6 +68,16 @@ export function AdminPanel({
   const applyNotice = () => {
     saveNotice(noticeDraft);
     notify("ইউজার পেমেন্ট বার্তা আপডেট করা হয়েছে।");
+  };
+
+  const applyAdUnit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (saveAdUnitId(adUnitDraft)) {
+      setAdUnitDraft("");
+      notify("অ্যাড আইডি সফলভাবে আপডেট করা হয়েছে!");
+    } else {
+      notify("সঠিক AdMob আইডি দিন (যেমন ca-app-pub-1234567890123456/1234567890)।");
+    }
   };
 
   const approve = (request: WithdrawRequest) => {
@@ -159,6 +172,32 @@ export function AdminPanel({
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Panel
+            icon={<BadgeDollarSign className="size-4" />}
+            title="অ্যাডমিন প্যানেল: AdMob আইডি সেটআপ"
+            tone="coin"
+          >
+            <form onSubmit={applyAdUnit} className="space-y-2">
+              <input
+                type="text"
+                placeholder="AdMob Ad Unit ID লিখুন"
+                value={adUnitDraft}
+                maxLength={60}
+                onChange={(event) => setAdUnitDraft(event.target.value)}
+                className="w-full rounded-xl border border-input bg-secondary px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring"
+              />
+              <button
+                type="submit"
+                className="bg-brand-gradient w-full rounded-xl px-4 py-2 text-sm font-bold text-brand-foreground"
+              >
+                সেভ করুন
+              </button>
+            </form>
+            <p className="break-all text-[11px] font-medium text-muted-foreground">
+              বর্তমান অ্যাক্টিভ অ্যাড আইডি:{" "}
+              <span className="font-mono text-foreground">{settings.adUnitId}</span>
+            </p>
+          </Panel>
           <Panel
             icon={<Megaphone className="size-4" />}
             title="অ্যাডভার্টাইজমেন্ট কন্ট্রোল"

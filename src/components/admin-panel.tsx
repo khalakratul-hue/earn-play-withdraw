@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
   BadgeDollarSign,
@@ -70,7 +70,7 @@ export function AdminPanel({
     notify("ইউজার পেমেন্ট বার্তা আপডেট করা হয়েছে।");
   };
 
-  const applyAdUnit = (event: React.FormEvent) => {
+  const applyAdUnit = (event: FormEvent) => {
     event.preventDefault();
     if (saveAdUnitId(adUnitDraft)) {
       setAdUnitDraft("");

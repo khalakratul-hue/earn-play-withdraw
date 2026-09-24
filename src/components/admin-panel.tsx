@@ -22,6 +22,7 @@ import {
   deleteComment,
   saveAdFrequency,
   saveAdUnitId,
+  saveWatchRule,
   saveNotice,
   setRequestStatus,
   setUploadStatus,
@@ -43,6 +44,22 @@ export function AdminPanel({
   const [freqDraft, setFreqDraft] = useState(String(settings.adFrequency));
   const [noticeDraft, setNoticeDraft] = useState(settings.notice);
   const [adUnitDraft, setAdUnitDraft] = useState("");
+  const [secDraft, setSecDraft] = useState(String(settings.watchSeconds));
+  const [rewardDraft, setRewardDraft] = useState(String(settings.watchReward));
+
+  useEffect(() => {
+    setSecDraft(String(settings.watchSeconds));
+    setRewardDraft(String(settings.watchReward));
+  }, [settings.watchSeconds, settings.watchReward]);
+
+  const applyWatchRule = (event: FormEvent) => {
+    event.preventDefault();
+    if (saveWatchRule(Number(secDraft), Number(rewardDraft))) {
+      notify("Saved: " + secDraft + "s = " + rewardDraft + " coins");
+    } else {
+      notify("Invalid: seconds 1-600, coins 1-1000");
+    }
+  };
 
   useEffect(() => {
     setFreqDraft(String(settings.adFrequency));
@@ -172,6 +189,48 @@ export function AdminPanel({
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Panel
+            icon={<Video className="size-4" />}
+            title="Watch Time Reward"
+            tone="coin"
+          >
+            <form onSubmit={applyWatchRule} className="space-y-2">
+              <label className="block text-xs font-semibold text-foreground">
+                Required Watch Time (Seconds)
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={600}
+                  value={secDraft}
+                  onChange={(event) => setSecDraft(event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-input bg-secondary px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-foreground">
+                Reward Points/Coins
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={1000}
+                  value={rewardDraft}
+                  onChange={(event) => setRewardDraft(event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-input bg-secondary px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                />
+              </label>
+              <button
+                type="submit"
+                className="bg-brand-gradient w-full rounded-xl px-4 py-2 text-sm font-bold text-brand-foreground"
+              >
+                Save
+              </button>
+            </form>
+            <p className="text-[11px] font-medium text-muted-foreground">
+              Active: <span className="font-bold text-foreground">{settings.watchSeconds}s</span> ={" "}
+              <span className="font-bold text-coin">{settings.watchReward} coins</span>
+            </p>
+          </Panel>
           <Panel
             icon={<BadgeDollarSign className="size-4" />}
             title="অ্যাডমিন প্যানেল: AdMob আইডি সেটআপ"

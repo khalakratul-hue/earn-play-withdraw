@@ -397,10 +397,11 @@ function WatchEarnApp() {
                   onGift={() => setGiftFor(item.user)}
                   onComments={() => setCommentsFor(item.id)}
                   onShare={() => void share(item)}
-                  onEnded={() => {
-                    award(item.id, 1);
-                    notify("ভিডিও সম্পন্ন! +১ পয়েন্ট");
-                    goNext();
+                  watchSeconds={settings.watchSeconds}
+                  done={Boolean(rewarded[item.id])}
+                  onWatched={() => {
+                    award(item.id, settings.watchReward);
+                    notify(`+${bn(settings.watchReward)} পয়েন্ট`);
                   }}
                 />
               )}
@@ -649,7 +650,9 @@ function VideoFeedCard({
   onGift,
   onComments,
   onShare,
-  onEnded,
+  watchSeconds,
+  done,
+  onWatched,
 }: {
   video: Extract<FeedItem, { type: "video" }>;
   active: boolean;
@@ -659,21 +662,63 @@ function VideoFeedCard({
   onGift: () => void;
   onComments: () => void;
   onShare: () => void;
-  onEnded: () => void;
+  watchSeconds: number;
+  done: boolean;
+  onWatched: () => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [liked, setLiked] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [watched, setWatched] = useState(0);
+  const lastTime = useRef<number | null>(null);
+  const firedRef = useRef(false);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     if (active) {
-      void el.play().catch(() => {});
+      setPaused(false);
+      void el.play().catch(() => setPaused(true));
     } else {
       el.pause();
       el.currentTime = 0;
+      lastTime.current = null;
+      setWatched(0);
     }
   }, [active]);
+
+  const togglePlay = () => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.paused) {
+      void el.play().catch(() => {});
+      setPaused(false);
+    } else {
+      el.pause();
+      setPaused(true);
+    }
+  };
+
+  // Count only real playback time (pause / seek do not add time).
+  const onTime = () => {
+    const el = ref.current;
+    if (!el || !active || el.paused) return;
+    const prev = lastTime.current;
+    lastTime.current = el.currentTime;
+    if (prev === null) return;
+    const delta = el.currentTime - prev;
+    if (delta <= 0 || delta > 1.5) return;
+    setWatched((w) => {
+      const next = w + delta;
+      if (!done && !firedRef.current && next >= watchSeconds) {
+        firedRef.current = true;
+        onWatched();
+      }
+      return next;
+    });
+  };
+
+  const progress = done ? 1 : Math.min(1, watched / Math.max(1, watchSeconds));
 
   return (
     <div className="relative h-full w-full bg-black">
@@ -683,9 +728,30 @@ function VideoFeedCard({
         playsInline
         muted={muted}
         preload="auto"
-        onEnded={onEnded}
-        className="h-full w-full object-cover"
+        onTimeUpdate={onTime}
+        onPause={() => {
+          lastTime.current = null;
+        }}
+        onEnded={() => setPaused(true)}
+        onClick={togglePlay}
+        className="h-full w-full cursor-pointer object-cover"
       />
+      {paused && (
+        <button
+          type="button"
+          aria-label="Play"
+          onClick={togglePlay}
+          className="absolute left-1/2 top-1/2 z-10 grid size-20 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/50 text-white backdrop-blur"
+        >
+          <Play className="ml-1 size-10 fill-current" />
+        </button>
+      )}
+      <div className="absolute inset-x-0 top-0 z-20 h-1 bg-white/15">
+        <div
+          className="h-full bg-coin transition-[width] duration-300"
+          style={{ width: `${progress * 100}%` }}
+        />
+      </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black/90 to-transparent" />
 
       <div className="absolute bottom-32 right-3 z-20 flex flex-col items-center gap-5">

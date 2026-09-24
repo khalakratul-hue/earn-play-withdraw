@@ -13,6 +13,16 @@ export const DEFAULT_NOTICE =
 export const DEFAULT_AD_UNIT_ID = "ca-app-pub-xxxxxxxx~yyyyyyyy";
 
 export const CHECKIN_REWARD = 10;
+export const DEFAULT_WATCH_SECONDS = 10;
+export const DEFAULT_WATCH_REWARD = 1;
+export const MAX_WATCH_SECONDS = 600;
+export const MAX_WATCH_REWARD = 1000;
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
 export const REFERRAL_REWARD = 50;
 
 export type WithdrawMethod = "bKash" | "Nagad";
@@ -69,6 +79,8 @@ export interface AppSettings {
   lastCheckIn: string;
   checkInStreak: number;
   adUnitId: string;
+  watchSeconds: number;
+  watchReward: number;
 }
 
 const SEED_REQUESTS: WithdrawRequest[] = [
@@ -122,6 +134,8 @@ const DEFAULTS: AppSettings = {
   lastCheckIn: "",
   checkInStreak: 0,
   adUnitId: DEFAULT_AD_UNIT_ID,
+  watchSeconds: DEFAULT_WATCH_SECONDS,
+  watchReward: DEFAULT_WATCH_REWARD,
 };
 
 function clampFrequency(value: unknown): number {
@@ -247,6 +261,8 @@ function normalize(value: unknown): AppSettings {
       typeof raw["adUnitId"] === "string" && raw["adUnitId"].length > 0
         ? raw["adUnitId"]
         : DEFAULT_AD_UNIT_ID,
+    watchSeconds: clampInt(raw["watchSeconds"], 1, MAX_WATCH_SECONDS, DEFAULT_WATCH_SECONDS),
+    watchReward: clampInt(raw["watchReward"], 1, MAX_WATCH_REWARD, DEFAULT_WATCH_REWARD),
   };
 }
 
@@ -488,5 +504,15 @@ export function saveAdUnitId(value: string): boolean {
   const trimmed = value.trim();
   if (!AD_UNIT_ID_PATTERN.test(trimmed)) return false;
   update((current) => ({ ...current, adUnitId: trimmed }));
+  return true;
+}
+
+/** Admin-controlled watch-time reward rule. */
+export function saveWatchRule(seconds: number, reward: number): boolean {
+  const s = Math.round(Number(seconds));
+  const r = Math.round(Number(reward));
+  if (!Number.isFinite(s) || s < 1 || s > MAX_WATCH_SECONDS) return false;
+  if (!Number.isFinite(r) || r < 1 || r > MAX_WATCH_REWARD) return false;
+  update((current) => ({ ...current, watchSeconds: s, watchReward: r }));
   return true;
 }

@@ -98,37 +98,37 @@ type FeedItem =
 
 const VIDEO_POOL = [
   {
-    url: "https://assets.mixkit.co/videos/preview/mixkit-tree-with-yellow-flowers-1173-large.mp4",
+    url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
     user: "@nature_king",
     caption: "সুন্দর প্রকৃতির দৃশ্য! 🌿 #nature",
     likes: 1200,
   },
   {
-    url: "https://assets.mixkit.co/videos/preview/mixkit-mother-with-her-little-daughter-eating-apples-40149-large.mp4",
+    url: "https://www.w3schools.com/html/mov_bbb.mp4",
     user: "@family_time",
     caption: "সুন্দর বিকেল ❤️ #vlog",
     likes: 3400,
   },
   {
-    url: "https://assets.mixkit.co/videos/preview/mixkit-a-girl-blowing-a-bubble-gum-bubble-41537-large.mp4",
+    url: "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4",
     user: "@fun_videos",
     caption: "মজার ভিডিও 😂 #funny",
     likes: 890,
   },
   {
-    url: "https://assets.mixkit.co/videos/preview/mixkit-tree-with-yellow-flowers-1173-large.mp4",
+    url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
     user: "@green_vibes",
     caption: "সুন্দর প্রকৃতির দৃশ্য! 🌿 #nature",
     likes: 2100,
   },
   {
-    url: "https://assets.mixkit.co/videos/preview/mixkit-mother-with-her-little-daughter-eating-apples-40149-large.mp4",
+    url: "https://www.w3schools.com/html/mov_bbb.mp4",
     user: "@daily_moments",
     caption: "সুন্দর বিকেল ❤️ #vlog",
     likes: 1500,
   },
   {
-    url: "https://assets.mixkit.co/videos/preview/mixkit-a-girl-blowing-a-bubble-gum-bubble-41537-large.mp4",
+    url: "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4",
     user: "@bubble_gum",
     caption: "মজার ভিডিও 😂 #funny",
     likes: 760,
@@ -682,7 +682,7 @@ function VideoFeedCard({
         src={video.url}
         playsInline
         muted={muted}
-        preload="metadata"
+        preload="auto"
         onEnded={onEnded}
         className="h-full w-full object-cover"
       />

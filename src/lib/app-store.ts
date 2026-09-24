@@ -10,6 +10,8 @@ export const MAX_AD_FREQUENCY = 100;
 export const DEFAULT_NOTICE =
   "পেমেন্ট পেতে কোনো সমস্যা হলে সাপোর্ট গ্রুপে যোগাযোগ করুন।";
 
+export const DEFAULT_AD_UNIT_ID = "ca-app-pub-xxxxxxxx~yyyyyyyy";
+
 export const CHECKIN_REWARD = 10;
 export const REFERRAL_REWARD = 50;
 
@@ -66,6 +68,7 @@ export interface AppSettings {
   referrals: number;
   lastCheckIn: string;
   checkInStreak: number;
+  adUnitId: string;
 }
 
 const SEED_REQUESTS: WithdrawRequest[] = [
@@ -118,6 +121,7 @@ const DEFAULTS: AppSettings = {
   referrals: 0,
   lastCheckIn: "",
   checkInStreak: 0,
+  adUnitId: DEFAULT_AD_UNIT_ID,
 };
 
 function clampFrequency(value: unknown): number {
@@ -239,6 +243,10 @@ function normalize(value: unknown): AppSettings {
     referrals: Number(raw["referrals"]) || 0,
     lastCheckIn: typeof raw["lastCheckIn"] === "string" ? raw["lastCheckIn"] : "",
     checkInStreak: Number(raw["checkInStreak"]) || 0,
+    adUnitId:
+      typeof raw["adUnitId"] === "string" && raw["adUnitId"].length > 0
+        ? raw["adUnitId"]
+        : DEFAULT_AD_UNIT_ID,
   };
 }
 
@@ -471,4 +479,14 @@ export function recordGift(input: {
       ...current.gifts,
     ],
   }));
+}
+
+/** AdMob ad unit / app IDs look like ca-app-pub-<16 digits>/<10 digits> or ~<10 digits>. */
+export const AD_UNIT_ID_PATTERN = /^ca-app-pub-\d{10,20}[/~]\d{6,12}$/;
+
+export function saveAdUnitId(value: string): boolean {
+  const trimmed = value.trim();
+  if (!AD_UNIT_ID_PATTERN.test(trimmed)) return false;
+  update((current) => ({ ...current, adUnitId: trimmed }));
+  return true;
 }

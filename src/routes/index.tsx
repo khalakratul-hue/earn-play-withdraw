@@ -37,7 +37,16 @@ import {
   submitUpload,
   submitWithdraw,
   useAppSettings,
+  usePaySettings,
+  collectApprovedDeposits,
+  submitDeposit,
+  BOOST_PACKS,
+  COINS_PER_TAKA,
+  MIN_DEPOSIT,
   type AppSettings,
+  type BoostPack,
+  type DepositMethod,
+  type DepositRequest,
   type WithdrawMethod,
 } from "@/lib/app-store";
 import { suggestGifts, type GiftSuggestion } from "@/lib/ai.functions";
@@ -88,6 +97,8 @@ type FeedItem =
       user: string;
       caption: string;
       likes: number;
+      sponsored?: BoostPack;
+      promoLink?: string;
     }
   | {
       id: string;
@@ -147,9 +158,22 @@ const VIDEO_QUEUE = Array.from(
   .slice(0, TOTAL_VIDEOS);
 
 /** Builds the feed: admin-approved user uploads first, then one forced ad after every N videos. */
-function buildFeed(settings: AppSettings): FeedItem[] {
+function buildFeed(settings: AppSettings, deposits: DepositRequest[]): FeedItem[] {
   const items: FeedItem[] = [];
   let videosSinceAd = 0;
+
+  // Accepted Reach Booster videos go to the very top (gold before silver).
+  const boosted: Omit<Extract<FeedItem, { type: "video" }>, "id" | "type">[] = deposits
+    .filter((d) => d.kind === "boost" && d.status === "approved" && d.videoUrl)
+    .sort((a, b) => (a.pack === "gold" ? 0 : 1) - (b.pack === "gold" ? 0 : 1))
+    .map((d) => ({
+      url: d.videoUrl ?? "",
+      user: d.user,
+      caption: d.caption ?? "",
+      likes: 0,
+      sponsored: d.pack ?? "silver",
+      ...(d.promoLink ? { promoLink: d.promoLink } : {}),
+    }));
 
   const approved = settings.uploads
     .filter((upload) => upload.status === "approved")
@@ -160,7 +184,7 @@ function buildFeed(settings: AppSettings): FeedItem[] {
       likes: 0,
     }));
 
-  const queue = [...approved, ...VIDEO_QUEUE];
+  const queue = [...boosted, ...approved, ...VIDEO_QUEUE];
 
   queue.forEach((video, index) => {
     items.push({ id: `v-${index}`, type: "video", ...video });
@@ -210,6 +234,8 @@ type Sheet =
   | "none"
   | "withdraw"
   | "recharge"
+  | "deposit"
+  | "boost"
   | "upload"
   | "referral"
   | "history"
@@ -228,7 +254,18 @@ function WatchEarnApp() {
   const [commentsFor, setCommentsFor] = useState<string | null>(null);
   const [sheet, setSheet] = useState<Sheet>("none");
   const settings = useAppSettings();
-  const feed = useMemo(() => buildFeed(settings), [settings]);
+  const pay = usePaySettings();
+  const feed = useMemo(() => buildFeed(settings, pay.deposits), [settings, pay.deposits]);
+
+  // Admin-accepted coin deposits land in the wallet automatically.
+  useEffect(() => {
+    const add = collectApprovedDeposits();
+    if (add > 0) {
+      setCoins((c) => c + add);
+      setToast(`ডিপোজিট এপ্রুভ হয়েছে! +${bn(add)} কয়েন যোগ হয়েছে`);
+      window.setTimeout(() => setToast(null), 2800);
+    }
+  }, [pay.deposits]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -489,12 +526,19 @@ function WatchEarnApp() {
         {sheet === "recharge" && (
           <RechargeModal
             onClose={() => setSheet("none")}
-            onBuy={(pack) => {
-              setCoins((c) => c + pack.coins);
+            onDeposit={() => setSheet("deposit")}
+            onBoost={() => setSheet("boost")}
+          />
+        )}
+
+        {(sheet === "deposit" || sheet === "boost") && (
+          <DepositSheet
+            mode={sheet}
+            onClose={() => setSheet("none")}
+            onCopied={notify}
+            onSubmitted={(msg) => {
               setSheet("none");
-              notify(
-                `${bn(pack.coins)} কয়েন যোগ হয়েছে (৳${bn(pack.taka)} — ডেমো পেমেন্ট)`,
-              );
+              notify(msg);
             }}
           />
         )}
@@ -795,10 +839,25 @@ function VideoFeedCard({
       </div>
 
       <div className="absolute inset-x-0 bottom-16 z-20 px-4 pr-20">
+        {video.sponsored && (
+          <p className="mb-1 inline-flex items-center gap-1 rounded-full bg-coin px-2 py-0.5 text-[10px] font-extrabold text-coin-foreground">
+            {video.sponsored === "gold" ? "⭐ ফিচার্ড প্রোফাইল · স্পনসর্ড" : "🚀 স্পনসর্ড"}
+          </p>
+        )}
         <p className="text-sm font-extrabold text-white">{video.user}</p>
         <p className="mt-1 text-xs font-medium leading-relaxed text-white/90">
           {video.caption}
         </p>
+        {video.promoLink && (
+          <a
+            href={video.promoLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 inline-block max-w-full truncate text-[11px] font-bold text-coin underline"
+          >
+            🔗 {video.promoLink}
+          </a>
+        )}
         <p className="mt-2 text-[10px] font-bold text-coin">
           সম্পূর্ণ ভিডিও দেখলে +১ পয়েন্ট
         </p>
@@ -1473,34 +1532,236 @@ function GiftModal({
 
 function RechargeModal({
   onClose,
-  onBuy,
+  onDeposit,
+  onBoost,
 }: {
   onClose: () => void;
-  onBuy: (pack: CoinPack) => void;
+  onDeposit: () => void;
+  onBoost: () => void;
 }) {
   return (
     <SheetShell
-      title="বিকাশ/নগদ দিয়ে কয়েন কিনুন"
-      subtitle="এখন ডেমো মোড — আসল পেমেন্ট চালু হলে টাকা কাটা হবে।"
+      title="কয়েন কিনুন ও বুস্ট করুন"
+      subtitle={`বিকাশ/নগদ/রকেটে সেন্ডমানি করুন · ৳১ = ${bn(COINS_PER_TAKA)} কয়েন`}
       onClose={onClose}
     >
-      <div className="grid grid-cols-3 gap-3 text-center">
-        {COIN_PACKS.map((pack) => (
-          <button
-            key={pack.coins}
-            onClick={() => onBuy(pack)}
-            className="flex flex-col items-center rounded-2xl border border-coin/30 bg-secondary p-3 transition-colors hover:border-coin active:scale-95"
-          >
-            <span className="text-2xl">🪙</span>
-            <span className="mt-1 text-xs font-extrabold text-coin">
-              {bn(pack.coins)}
+      <div className="space-y-3">
+        <button
+          onClick={onDeposit}
+          className="flex w-full items-center gap-3 rounded-2xl border border-coin/40 bg-secondary p-4 text-left active:scale-95"
+        >
+          <span className="text-3xl">🪙</span>
+          <span>
+            <span className="block text-sm font-extrabold text-coin">কয়েন ডিপোজিট</span>
+            <span className="block text-[11px] font-semibold text-foreground/80">
+              সেন্ডমানি করে TrxID দিন, এডমিন এপ্রুভ করলে কয়েন যোগ হবে
             </span>
-            <span className="text-[10px] font-bold text-foreground/75">
-              ৳{bn(pack.taka)}
+          </span>
+        </button>
+        <button
+          onClick={onBoost}
+          className="flex w-full items-center gap-3 rounded-2xl border border-primary/40 bg-secondary p-4 text-left active:scale-95"
+        >
+          <span className="text-3xl">🚀</span>
+          <span>
+            <span className="block text-sm font-extrabold text-primary">Reach Booster</span>
+            <span className="block text-[11px] font-semibold text-foreground/80">
+              আপনার ভিডিও/পেজ সবার ফিডের উপরে দেখান
             </span>
-          </button>
-        ))}
+          </span>
+        </button>
       </div>
+    </SheetShell>
+  );
+}
+
+const DEPOSIT_METHODS: DepositMethod[] = ["bKash", "Nagad", "Rocket"];
+
+function DepositSheet({
+  mode,
+  onClose,
+  onCopied,
+  onSubmitted,
+}: {
+  mode: "deposit" | "boost";
+  onClose: () => void;
+  onCopied: (msg: string) => void;
+  onSubmitted: (msg: string) => void;
+}) {
+  const pay = usePaySettings();
+  const [method, setMethod] = useState<DepositMethod>("bKash");
+  const [pack, setPack] = useState<BoostPack>("silver");
+  const [amount, setAmount] = useState("");
+  const [trxId, setTrxId] = useState("");
+  const [name, setName] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [caption, setCaption] = useState("");
+  const [promoLink, setPromoLink] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const isBoost = mode === "boost";
+  const number = pay.numbers[method];
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(number);
+      onCopied(`${method} নাম্বার কপি হয়েছে: ${number}`);
+    } catch {
+      onCopied(number);
+    }
+  };
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const amt = isBoost ? BOOST_PACKS[pack].taka : Math.round(Number(amount));
+    const trx = trxId.trim().toUpperCase();
+    const user = name.trim() || "@আমি";
+    if (!isBoost && (!Number.isFinite(amt) || amt < MIN_DEPOSIT || amt > 50000)) {
+      setError(`সর্বনিম্ন ৳${bn(MIN_DEPOSIT)} দিন।`);
+      return;
+    }
+    if (!/^[A-Z0-9]{6,20}$/.test(trx)) {
+      setError("সঠিক Transaction ID (TrxID) দিন।");
+      return;
+    }
+    if (pay.deposits.some((d) => d.trxId === trx)) {
+      setError("এই TrxID আগেই ব্যবহার হয়েছে।");
+      return;
+    }
+    if (isBoost) {
+      try {
+        const u = new URL(videoUrl.trim());
+        if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error();
+      } catch {
+        setError("সঠিক ভিডিও লিংক দিন (https://...)।");
+        return;
+      }
+      if (promoLink.trim() && !/^https?:\/\//.test(promoLink.trim())) {
+        setError("ফেসবুক/ইউটিউব লিংক https:// দিয়ে শুরু করুন।");
+        return;
+      }
+    }
+    submitDeposit({
+      user: user.slice(0, 40),
+      amount: amt,
+      method,
+      trxId: trx,
+      kind: isBoost ? "boost" : "coins",
+      ...(isBoost
+        ? {
+            pack,
+            videoUrl: videoUrl.trim(),
+            caption: caption.trim().slice(0, 160),
+            ...(promoLink.trim() ? { promoLink: promoLink.trim().slice(0, 200) } : {}),
+          }
+        : {}),
+    });
+    onSubmitted(
+      isBoost
+        ? "বুস্ট রিকোয়েস্ট পাঠানো হয়েছে, এডমিন যাচাই করলে ভিডিও উপরে দেখাবে।"
+        : `৳${bn(amt)} ডিপোজিট রিকোয়েস্ট পাঠানো হয়েছে।`,
+    );
+  };
+
+  const field =
+    "w-full rounded-xl border border-border bg-secondary px-3 py-2 text-sm font-semibold text-foreground placeholder:text-muted-foreground";
+  const mine = pay.deposits.filter((d) => d.kind === (isBoost ? "boost" : "coins")).slice(0, 5);
+
+  return (
+    <SheetShell
+      title={isBoost ? "🚀 Reach Booster" : "🪙 কয়েন ডিপোজিট"}
+      subtitle={isBoost ? "ভিডিও প্রমোশন ও স্পনসরশিপ প্যাকেজ" : `৳১ = ${bn(COINS_PER_TAKA)} কয়েন`}
+      onClose={onClose}
+    >
+      <form onSubmit={submit} className="space-y-3">
+        {isBoost && (
+          <div className="grid grid-cols-2 gap-2">
+            {(Object.keys(BOOST_PACKS) as BoostPack[]).map((key) => {
+              const p = BOOST_PACKS[key];
+              return (
+                <button
+                  type="button"
+                  key={key}
+                  onClick={() => setPack(key)}
+                  className={`rounded-2xl border p-3 text-left ${
+                    pack === key ? "border-coin bg-coin/15" : "border-border bg-secondary"
+                  }`}
+                >
+                  <span className="block text-xs font-extrabold text-coin">
+                    {key === "gold" ? "🥇" : "🥈"} {p.label}
+                  </span>
+                  <span className="block text-lg font-extrabold text-foreground">৳{bn(p.taka)}</span>
+                  <span className="block text-[10px] font-semibold text-foreground/80">
+                    {bn(p.views.toLocaleString("en-US"))} ভিউ{p.featured ? " + প্রোফাইল ফিচার" : " · ফিডের সবার উপরে"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          {DEPOSIT_METHODS.map((m) => (
+            <button
+              type="button"
+              key={m}
+              onClick={() => setMethod(m)}
+              className={`flex-1 rounded-xl border py-2 text-xs font-extrabold ${
+                method === m ? "border-primary bg-primary/20 text-foreground" : "border-border bg-secondary text-foreground/80"
+              }`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+
+        <div className="rounded-2xl border border-coin/40 bg-secondary p-3">
+          <p className="text-[11px] font-semibold text-foreground/80">{method} সেন্ডমানি নাম্বার</p>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <span className="font-mono text-lg font-extrabold text-coin">{number}</span>
+            <button
+              type="button"
+              onClick={copy}
+              className="flex items-center gap-1 rounded-full bg-coin px-3 py-1 text-xs font-extrabold text-coin-foreground"
+            >
+              <Copy className="size-3.5" /> কপি
+            </button>
+          </div>
+          <p className="mt-2 whitespace-pre-line text-[11px] font-medium leading-relaxed text-foreground/85">
+            {pay.depositNotice}
+          </p>
+        </div>
+
+        <input className={field} placeholder="আপনার নাম / @username" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} />
+        {!isBoost && (
+          <input className={field} inputMode="numeric" placeholder={`কত টাকা পাঠিয়েছেন (সর্বনিম্ন ${bn(MIN_DEPOSIT)})`} value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} />
+        )}
+        <input className={`${field} font-mono uppercase`} placeholder="Transaction ID (TrxID)" value={trxId} onChange={(e) => setTrxId(e.target.value)} maxLength={20} />
+        {isBoost && (
+          <>
+            <input className={field} placeholder="ভিডিও লিংক (https://...mp4)" value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} maxLength={300} />
+            <input className={field} placeholder="ক্যাপশন" value={caption} onChange={(e) => setCaption(e.target.value)} maxLength={160} />
+            <input className={field} placeholder="ফেসবুক পেজ / ইউটিউব লিংক (ঐচ্ছিক)" value={promoLink} onChange={(e) => setPromoLink(e.target.value)} maxLength={200} />
+          </>
+        )}
+        {error && <p className="text-xs font-bold text-destructive">{error}</p>}
+        <button type="submit" className="bg-brand-gradient w-full rounded-xl py-3 text-sm font-extrabold text-brand-foreground">
+          রিকোয়েস্ট সাবমিট করুন
+        </button>
+      </form>
+
+      {mine.length > 0 && (
+        <div className="mt-4 space-y-2">
+          <p className="text-xs font-extrabold text-foreground">আমার রিকোয়েস্ট</p>
+          {mine.map((d) => (
+            <div key={d.id} className="flex items-center justify-between rounded-xl bg-secondary px-3 py-2 text-[11px] font-semibold text-foreground">
+              <span>৳{bn(d.amount)} · {d.method} · <span className="font-mono">{d.trxId}</span></span>
+              <span className={d.status === "approved" ? "text-success" : d.status === "rejected" ? "text-destructive" : "text-warning"}>
+                {d.status === "approved" ? "এপ্রুভড" : d.status === "rejected" ? "বাতিল" : "অপেক্ষমাণ"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </SheetShell>
   );
 }

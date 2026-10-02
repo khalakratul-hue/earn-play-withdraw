@@ -10,6 +10,7 @@ import {
   History,
   Link2,
   MessageCircle,
+  Play,
   Plus,
   Send,
   Share2,
@@ -283,11 +284,6 @@ function WatchEarnApp() {
   useEffect(() => {
     setAdLocked(current?.type === "forced_ad" && !rewarded[current.id]);
   }, [current, rewarded]);
-
-  const goNext = useCallback(() => {
-    const el = itemRefs.current[currentIndex + 1];
-    el?.scrollIntoView({ behavior: "smooth" });
-  }, [currentIndex]);
 
   const checkedIn = isCheckedInToday(settings);
 

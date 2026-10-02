@@ -37,7 +37,16 @@ import {
   submitUpload,
   submitWithdraw,
   useAppSettings,
+  usePaySettings,
+  collectApprovedDeposits,
+  submitDeposit,
+  BOOST_PACKS,
+  COINS_PER_TAKA,
+  MIN_DEPOSIT,
   type AppSettings,
+  type BoostPack,
+  type DepositMethod,
+  type DepositRequest,
   type WithdrawMethod,
 } from "@/lib/app-store";
 import { suggestGifts, type GiftSuggestion } from "@/lib/ai.functions";
@@ -88,6 +97,8 @@ type FeedItem =
       user: string;
       caption: string;
       likes: number;
+      sponsored?: BoostPack;
+      promoLink?: string;
     }
   | {
       id: string;
@@ -147,9 +158,22 @@ const VIDEO_QUEUE = Array.from(
   .slice(0, TOTAL_VIDEOS);
 
 /** Builds the feed: admin-approved user uploads first, then one forced ad after every N videos. */
-function buildFeed(settings: AppSettings): FeedItem[] {
+function buildFeed(settings: AppSettings, deposits: DepositRequest[]): FeedItem[] {
   const items: FeedItem[] = [];
   let videosSinceAd = 0;
+
+  // Accepted Reach Booster videos go to the very top (gold before silver).
+  const boosted: Omit<Extract<FeedItem, { type: "video" }>, "id" | "type">[] = deposits
+    .filter((d) => d.kind === "boost" && d.status === "approved" && d.videoUrl)
+    .sort((a, b) => (a.pack === "gold" ? 0 : 1) - (b.pack === "gold" ? 0 : 1))
+    .map((d) => ({
+      url: d.videoUrl ?? "",
+      user: d.user,
+      caption: d.caption ?? "",
+      likes: 0,
+      sponsored: d.pack ?? "silver",
+      ...(d.promoLink ? { promoLink: d.promoLink } : {}),
+    }));
 
   const approved = settings.uploads
     .filter((upload) => upload.status === "approved")
@@ -160,7 +184,7 @@ function buildFeed(settings: AppSettings): FeedItem[] {
       likes: 0,
     }));
 
-  const queue = [...approved, ...VIDEO_QUEUE];
+  const queue = [...boosted, ...approved, ...VIDEO_QUEUE];
 
   queue.forEach((video, index) => {
     items.push({ id: `v-${index}`, type: "video", ...video });
@@ -210,6 +234,8 @@ type Sheet =
   | "none"
   | "withdraw"
   | "recharge"
+  | "deposit"
+  | "boost"
   | "upload"
   | "referral"
   | "history"
@@ -228,7 +254,18 @@ function WatchEarnApp() {
   const [commentsFor, setCommentsFor] = useState<string | null>(null);
   const [sheet, setSheet] = useState<Sheet>("none");
   const settings = useAppSettings();
-  const feed = useMemo(() => buildFeed(settings), [settings]);
+  const pay = usePaySettings();
+  const feed = useMemo(() => buildFeed(settings, pay.deposits), [settings, pay.deposits]);
+
+  // Admin-accepted coin deposits land in the wallet automatically.
+  useEffect(() => {
+    const add = collectApprovedDeposits();
+    if (add > 0) {
+      setCoins((c) => c + add);
+      setToast(`ডিপোজিট এপ্রুভ হয়েছে! +${bn(add)} কয়েন যোগ হয়েছে`);
+      window.setTimeout(() => setToast(null), 2800);
+    }
+  }, [pay.deposits]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -489,12 +526,19 @@ function WatchEarnApp() {
         {sheet === "recharge" && (
           <RechargeModal
             onClose={() => setSheet("none")}
-            onBuy={(pack) => {
-              setCoins((c) => c + pack.coins);
+            onDeposit={() => setSheet("deposit")}
+            onBoost={() => setSheet("boost")}
+          />
+        )}
+
+        {(sheet === "deposit" || sheet === "boost") && (
+          <DepositSheet
+            mode={sheet}
+            onClose={() => setSheet("none")}
+            onCopied={notify}
+            onSubmitted={(msg) => {
               setSheet("none");
-              notify(
-                `${bn(pack.coins)} কয়েন যোগ হয়েছে (৳${bn(pack.taka)} — ডেমো পেমেন্ট)`,
-              );
+              notify(msg);
             }}
           />
         )}
@@ -795,10 +839,25 @@ function VideoFeedCard({
       </div>
 
       <div className="absolute inset-x-0 bottom-16 z-20 px-4 pr-20">
+        {video.sponsored && (
+          <p className="mb-1 inline-flex items-center gap-1 rounded-full bg-coin px-2 py-0.5 text-[10px] font-extrabold text-coin-foreground">
+            {video.sponsored === "gold" ? "⭐ ফিচার্ড প্রোফাইল · স্পনসর্ড" : "🚀 স্পনসর্ড"}
+          </p>
+        )}
         <p className="text-sm font-extrabold text-white">{video.user}</p>
         <p className="mt-1 text-xs font-medium leading-relaxed text-white/90">
           {video.caption}
         </p>
+        {video.promoLink && (
+          <a
+            href={video.promoLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 inline-block max-w-full truncate text-[11px] font-bold text-coin underline"
+          >
+            🔗 {video.promoLink}
+          </a>
+        )}
         <p className="mt-2 text-[10px] font-bold text-coin">
           সম্পূর্ণ ভিডিও দেখলে +১ পয়েন্ট
         </p>

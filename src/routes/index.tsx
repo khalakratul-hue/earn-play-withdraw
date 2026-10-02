@@ -10,6 +10,7 @@ import {
   History,
   Link2,
   MessageCircle,
+  Play,
   Plus,
   Send,
   Share2,

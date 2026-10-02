@@ -516,3 +516,148 @@ export function saveWatchRule(seconds: number, reward: number): boolean {
   update((current) => ({ ...current, watchSeconds: s, watchReward: r }));
   return true;
 }
+
+// ---------------- Deposit + Reach Booster ----------------
+
+/** Manual send-money deposits: ৳1 buys this many coins (matches recharge packs, 100 = ৳20). */
+export const COINS_PER_TAKA = 5;
+export const MIN_DEPOSIT = 10;
+
+export type DepositMethod = "bKash" | "Nagad" | "Rocket";
+export type BoostPack = "silver" | "gold";
+
+export const BOOST_PACKS: Record<BoostPack, { label: string; taka: number; views: number; featured: boolean }> = {
+  silver: { label: "সিলভার প্যাক", taka: 50, views: 1000, featured: false },
+  gold: { label: "গোল্ড প্যাক", taka: 150, views: 3000, featured: true },
+};
+
+export interface DepositRequest {
+  id: string;
+  user: string;
+  amount: number;
+  method: DepositMethod;
+  trxId: string;
+  status: UploadStatus;
+  credited: boolean;
+  kind: "coins" | "boost";
+  pack?: BoostPack;
+  videoUrl?: string;
+  caption?: string;
+  promoLink?: string;
+  createdAt: number;
+}
+
+export interface PaySettings {
+  numbers: Record<DepositMethod, string>;
+  depositNotice: string;
+  deposits: DepositRequest[];
+}
+
+const PAY_KEY = "watchcoin.pay.v1";
+const PAY_DEFAULTS: PaySettings = {
+  numbers: { bKash: "01XXXXXXXXX", Nagad: "01XXXXXXXXX", Rocket: "01XXXXXXXXX" },
+  depositNotice:
+    "শুধু Send Money করুন। টাকা পাঠানোর পর সঠিক TrxID দিয়ে রিকোয়েস্ট দিন। এডমিন যাচাই করে কয়েন যোগ করবে।",
+  deposits: [],
+};
+
+function readPay(): PaySettings {
+  if (typeof window === "undefined") return PAY_DEFAULTS;
+  try {
+    const raw = window.localStorage.getItem(PAY_KEY);
+    if (!raw) return PAY_DEFAULTS;
+    const v = JSON.parse(raw) as Partial<PaySettings>;
+    return {
+      numbers: { ...PAY_DEFAULTS.numbers, ...(v.numbers ?? {}) },
+      depositNotice: typeof v.depositNotice === "string" ? v.depositNotice : PAY_DEFAULTS.depositNotice,
+      deposits: Array.isArray(v.deposits) ? v.deposits : [],
+    };
+  } catch {
+    return PAY_DEFAULTS;
+  }
+}
+
+let payCache: PaySettings | null = null;
+const payListeners = new Set<() => void>();
+function paySnapshot(): PaySettings {
+  if (payCache === null) payCache = readPay();
+  return payCache;
+}
+function paySubscribe(l: () => void) {
+  payListeners.add(l);
+  return () => {
+    payListeners.delete(l);
+  };
+}
+function payUpdate(mut: (c: PaySettings) => PaySettings) {
+  payCache = mut(paySnapshot());
+  try {
+    window.localStorage.setItem(PAY_KEY, JSON.stringify(payCache));
+  } catch {
+    // ignore
+  }
+  for (const l of payListeners) l();
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key === PAY_KEY) {
+      payCache = null;
+      for (const l of payListeners) l();
+    }
+  });
+}
+
+export function usePaySettings(): PaySettings {
+  const s = useSyncExternalStore(paySubscribe, paySnapshot, () => PAY_DEFAULTS);
+  const hydrated = useHydrated();
+  return hydrated ? s : PAY_DEFAULTS;
+}
+
+export function savePayConfig(numbers: Record<DepositMethod, string>, notice: string) {
+  payUpdate((c) => ({
+    ...c,
+    numbers: {
+      bKash: numbers.bKash.trim().slice(0, 20),
+      Nagad: numbers.Nagad.trim().slice(0, 20),
+      Rocket: numbers.Rocket.trim().slice(0, 20),
+    },
+    depositNotice: notice.trim().slice(0, 500) || PAY_DEFAULTS.depositNotice,
+  }));
+}
+
+export function submitDeposit(input: Omit<DepositRequest, "id" | "status" | "credited" | "createdAt">) {
+  payUpdate((c) => ({
+    ...c,
+    deposits: [
+      {
+        ...input,
+        id: `dep-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+        status: "pending",
+        credited: false,
+        createdAt: Date.now(),
+      },
+      ...c.deposits,
+    ],
+  }));
+}
+
+export function setDepositStatus(id: string, status: UploadStatus) {
+  payUpdate((c) => ({
+    ...c,
+    deposits: c.deposits.map((d) => (d.id === id ? { ...d, status } : d)),
+  }));
+}
+
+/** Marks approved coin deposits as credited and returns the coins to add to the wallet. */
+export function collectApprovedDeposits(): number {
+  const pending = paySnapshot().deposits.filter(
+    (d) => d.kind === "coins" && d.status === "approved" && !d.credited,
+  );
+  if (pending.length === 0) return 0;
+  const ids = new Set(pending.map((d) => d.id));
+  payUpdate((c) => ({
+    ...c,
+    deposits: c.deposits.map((d) => (ids.has(d.id) ? { ...d, credited: true } : d)),
+  }));
+  return pending.reduce((sum, d) => sum + d.amount * COINS_PER_TAKA, 0);
+}

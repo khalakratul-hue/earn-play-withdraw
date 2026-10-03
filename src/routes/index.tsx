@@ -83,11 +83,6 @@ const GIFTS = [
   { emoji: "👑", name: "মুকুট", label: "রাজমুকুট 👑", cost: 100 },
 ];
 
-const COIN_PACKS = [
-  { coins: 100, taka: 20 },
-  { coins: 500, taka: 90 },
-  { coins: 1000, taka: 170 },
-];
 
 type FeedItem =
   | {
@@ -1403,7 +1398,6 @@ function WithdrawModal({
 }
 
 type GiftOption = (typeof GIFTS)[number];
-type CoinPack = (typeof COIN_PACKS)[number];
 
 function GiftModal({
   creator,
@@ -1610,7 +1604,7 @@ function DepositSheet({
     }
   };
 
-  const submit = (event: React.FormEvent) => {
+  const submit = (event: { preventDefault: () => void }) => {
     event.preventDefault();
     const amt = isBoost ? BOOST_PACKS[pack].taka : Math.round(Number(amount));
     const trx = trxId.trim().toUpperCase();

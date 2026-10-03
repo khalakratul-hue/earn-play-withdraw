@@ -10,6 +10,9 @@
 - [x] Creator earnings dashboard (total gifts, coins, taka, 7-day chart, per-creator)
 - [x] AI gift suggestions from the viewer's message via Lovable AI
 
+- [x] Coin deposit via send-money (admin numbers, notice, TrxID, Accept/Reject credits coins)
+- [x] Reach Booster packs (Silver ৳50, Gold ৳150) pinned to top of feed after admin accept
+
 ## Blocked
 - [ ] Real bKash / Nagad payment for coin recharge — needs Lovable Cloud backend plus the user's
       merchant credentials (bKash Merchant/PGW app key & secret, Nagad merchant ID & keys).

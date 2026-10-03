@@ -28,6 +28,12 @@ import {
   setUploadStatus,
   setUploadsEnabled,
   useAppSettings,
+  usePaySettings,
+  savePayConfig,
+  setDepositStatus,
+  COINS_PER_TAKA,
+  BOOST_PACKS,
+  type DepositMethod,
   type WithdrawRequest,
 } from "@/lib/app-store";
 import { bn, taka } from "@/lib/format";
@@ -40,6 +46,13 @@ export function AdminPanel({
   onLogout: () => void;
 }) {
   const settings = useAppSettings();
+  const pay = usePaySettings();
+  const [numDraft, setNumDraft] = useState(pay.numbers);
+  const [depNoticeDraft, setDepNoticeDraft] = useState(pay.depositNotice);
+  useEffect(() => {
+    setNumDraft(pay.numbers);
+    setDepNoticeDraft(pay.depositNotice);
+  }, [pay.numbers, pay.depositNotice]);
   const [toast, setToast] = useState<string | null>(null);
   const [freqDraft, setFreqDraft] = useState(String(settings.adFrequency));
   const [noticeDraft, setNoticeDraft] = useState(settings.notice);
@@ -546,6 +559,107 @@ export function AdminPanel({
                             {request.status === "approved"
                               ? "পরিশোধ করা হয়েছে"
                               : "রিজেক্ট করা হয়েছে"}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        <Panel icon={<BadgeDollarSign className="size-4" />} title="ডিপোজিট সেন্ডমানি নাম্বার ও নিয়ম" tone="coin">
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              savePayConfig(numDraft, depNoticeDraft);
+              notify("সেন্ডমানি নাম্বার ও নিয়ম সেভ হয়েছে।");
+            }}
+          >
+            <div className="grid gap-3 sm:grid-cols-3">
+              {(["bKash", "Nagad", "Rocket"] as DepositMethod[]).map((m) => (
+                <label key={m} className="block text-xs font-bold text-foreground">
+                  {m} নাম্বার
+                  <input
+                    value={numDraft[m]}
+                    onChange={(e) => setNumDraft({ ...numDraft, [m]: e.target.value })}
+                    maxLength={20}
+                    className="mt-1 w-full rounded-xl border border-border bg-secondary px-3 py-2 font-mono text-sm text-foreground"
+                  />
+                </label>
+              ))}
+            </div>
+            <label className="block text-xs font-bold text-foreground">
+              ইউজারদের জন্য নির্দেশনা / নোটিশ
+              <textarea
+                value={depNoticeDraft}
+                onChange={(e) => setDepNoticeDraft(e.target.value)}
+                rows={3}
+                maxLength={500}
+                className="mt-1 w-full rounded-xl border border-border bg-secondary px-3 py-2 text-sm text-foreground"
+              />
+            </label>
+            <button type="submit" className="bg-brand-gradient rounded-xl px-4 py-2 text-xs font-extrabold text-brand-foreground">
+              সেভ করুন
+            </button>
+          </form>
+        </Panel>
+
+        <Panel icon={<DollarSign className="size-4" />} title={`ডিপোজিট ও বুস্ট রিকোয়েস্ট (৳১ = ${bn(COINS_PER_TAKA)} কয়েন)`} tone="success">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-xs">
+              <thead className="text-muted-foreground">
+                <tr>
+                  <th className="py-2">User Name</th>
+                  <th>Type</th>
+                  <th>Amount</th>
+                  <th>Method</th>
+                  <th>TrxID</th>
+                  <th>Status</th>
+                  <th className="text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="text-foreground">
+                {pay.deposits.length === 0 && (
+                  <tr><td colSpan={7} className="py-4 text-center text-muted-foreground">কোনো রিকোয়েস্ট নেই।</td></tr>
+                )}
+                {pay.deposits.map((d) => (
+                  <tr key={d.id} className="border-t border-border">
+                    <td className="py-2 font-bold">{d.user}</td>
+                    <td>
+                      {d.kind === "boost" ? (
+                        <span title={d.videoUrl}>🚀 {BOOST_PACKS[d.pack ?? "silver"].label}</span>
+                      ) : (
+                        <span>🪙 {bn(d.amount * COINS_PER_TAKA)} কয়েন</span>
+                      )}
+                    </td>
+                    <td className="font-bold text-coin">{taka(d.amount)}</td>
+                    <td>{d.method}</td>
+                    <td className="font-mono">{d.trxId}</td>
+                    <td><StatusPill status={d.status} /></td>
+                    <td>
+                      <div className="flex justify-end gap-1.5">
+                        {d.status === "pending" ? (
+                          <>
+                            <button
+                              onClick={() => { setDepositStatus(d.id, "approved"); notify("রিকোয়েস্ট Accept করা হয়েছে।"); }}
+                              className="flex items-center gap-1 rounded-lg bg-success px-2.5 py-1 text-[10px] font-bold text-success-foreground"
+                            >
+                              <CheckCircle2 className="size-3" /> Accept
+                            </button>
+                            <button
+                              onClick={() => { setDepositStatus(d.id, "rejected"); notify("রিকোয়েস্ট বাতিল করা হয়েছে।"); }}
+                              className="flex items-center gap-1 rounded-lg bg-destructive px-2.5 py-1 text-[10px] font-bold text-destructive-foreground"
+                            >
+                              <XCircle className="size-3" /> Reject
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-muted-foreground">
+                            {d.status === "approved" ? "যোগ করা হয়েছে" : "বাতিল"}
                           </span>
                         )}
                       </div>

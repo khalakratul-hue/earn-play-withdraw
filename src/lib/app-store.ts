@@ -1,43 +1,49 @@
+/**
+ * Cloud-backed app store. Public data (settings, comments, approved uploads,
+ * accepted promotions) loads for everyone; wallet + personal history load for
+ * the signed-in user. Coin/point changes go through database functions only.
+ */
 import { useEffect, useState, useSyncExternalStore } from "react";
 
-const STORAGE_KEY = "watchcoin.v1";
-const CHANGE_EVENT = "watchcoin:change";
+import { supabase } from "@/integrations/supabase/client";
 
 export const DEFAULT_AD_FREQUENCY = 20;
 export const MIN_AD_FREQUENCY = 1;
 export const MAX_AD_FREQUENCY = 100;
-
-export const DEFAULT_NOTICE =
-  "পেমেন্ট পেতে কোনো সমস্যা হলে সাপোর্ট গ্রুপে যোগাযোগ করুন।";
-
-export const DEFAULT_AD_UNIT_ID = "ca-app-pub-xxxxxxxx~yyyyyyyy";
+export const DEFAULT_NOTICE = "পেমেন্ট পেতে কোনো সমস্যা হলে সাপোর্ট গ্রুপে যোগাযোগ করুন।";
+export const DEFAULT_DEPOSIT_NOTICE =
+  "শুধু Send Money করুন। টাকা পাঠানোর পর সঠিক TrxID দিয়ে রিকোয়েস্ট দিন। এডমিন যাচাই করে কয়েন যোগ করবে।";
+export const DEFAULT_VIP_BENEFITS =
+  "👑 নামের পাশে VIP ব্যাজ\n📺 অর্ধেক বিজ্ঞাপন দেখবেন\n🪙 ভিডিও দেখে দ্বিগুণ পয়েন্ট";
+export const DEFAULT_RULES = [
+  "১. একাধিক অ্যাকাউন্ট খোলা যাবে না।",
+  "২. ভুয়া বা অন্যের TrxID দেওয়া যাবে না।",
+  "৩. কমেন্টে গালি, স্প্যাম বা অশ্লীল কথা লেখা যাবে না।",
+  "৪. অন্যের ভিডিও নিজের নামে আপলোড করা যাবে না।",
+  "৫. অটো-ক্লিক বা কোনো চিটিং অ্যাপ ব্যবহার করা যাবে না।",
+  "নিয়ম ভাঙলে এডমিন জরিমানা করতে পারে অথবা আইডি ব্লক করতে পারে।",
+].join("\n");
 
 export const CHECKIN_REWARD = 10;
-export const DEFAULT_WATCH_SECONDS = 10;
-export const DEFAULT_WATCH_REWARD = 1;
+export const REFERRAL_REWARD = 50;
 export const MAX_WATCH_SECONDS = 600;
 export const MAX_WATCH_REWARD = 1000;
-
-function clampInt(value: unknown, min: number, max: number, fallback: number): number {
-  const n = Math.round(Number(value));
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
-export const REFERRAL_REWARD = 50;
+export const COINS_PER_TAKA = 5;
+export const MIN_DEPOSIT = 10;
+export const POINTS_PER_TAKA = 100;
 
 export type WithdrawMethod = "bKash" | "Nagad";
-export type WithdrawStatus = "pending" | "approved" | "rejected";
-export type UploadStatus = "pending" | "approved" | "rejected";
+export type ReqStatus = "pending" | "approved" | "rejected";
+export type UploadStatus = ReqStatus;
+export type WithdrawStatus = ReqStatus;
+export type DepositMethod = "bKash" | "Nagad" | "Rocket";
+export type DepositKind = "coins" | "boost" | "ad" | "vip";
+export type BoostPack = "silver" | "gold";
 
-export interface WithdrawRequest {
-  id: string;
-  user: string;
-  phone: string;
-  method: WithdrawMethod;
-  amount: number;
-  status: WithdrawStatus;
-  createdAt: number;
-}
+export const BOOST_PACKS: Record<BoostPack, { label: string; taka: number; views: number; featured: boolean }> = {
+  silver: { label: "সিলভার প্যাক", taka: 50, views: 1000, featured: false },
+  gold: { label: "গোল্ড প্যাক", taka: 150, views: 3000, featured: true },
+};
 
 export interface VideoComment {
   id: string;
@@ -46,7 +52,6 @@ export interface VideoComment {
   text: string;
   createdAt: number;
 }
-
 export interface UploadedVideo {
   id: string;
   user: string;
@@ -55,7 +60,6 @@ export interface UploadedVideo {
   status: UploadStatus;
   createdAt: number;
 }
-
 export interface GiftRecord {
   id: string;
   gift: string;
@@ -65,599 +69,400 @@ export interface GiftRecord {
   sender: string;
   createdAt: number;
 }
-
-export interface AppSettings {
-  adFrequency: number;
-  notice: string;
-  requests: WithdrawRequest[];
-  comments: VideoComment[];
-  uploads: UploadedVideo[];
-  gifts: GiftRecord[];
-  uploadsEnabled: boolean;
-  referralCode: string;
-  referrals: number;
-  lastCheckIn: string;
-  checkInStreak: number;
-  adUnitId: string;
-  watchSeconds: number;
-  watchReward: number;
-}
-
-const SEED_REQUESTS: WithdrawRequest[] = [
-  {
-    id: "req-1001",
-    user: "Karim Ahmed",
-    phone: "01712345678",
-    method: "bKash",
-    amount: 50,
-    status: "pending",
-    createdAt: Date.parse("2026-09-19T03:05:00Z"),
-  },
-  {
-    id: "req-1002",
-    user: "Rahim Hossain",
-    phone: "01987654321",
-    method: "Nagad",
-    amount: 100,
-    status: "pending",
-    createdAt: Date.parse("2026-09-19T03:40:00Z"),
-  },
-];
-
-const SEED_COMMENTS: VideoComment[] = [
-  {
-    id: "c-1",
-    videoId: "v-0",
-    user: "@shanto",
-    text: "দুর্দান্ত ভিডিও! আরো চাই।",
-    createdAt: Date.parse("2026-09-19T05:00:00Z"),
-  },
-  {
-    id: "c-2",
-    videoId: "v-0",
-    user: "@mitu",
-    text: "খুব সুন্দর লাগলো।",
-    createdAt: Date.parse("2026-09-19T05:30:00Z"),
-  },
-];
-
-const DEFAULTS: AppSettings = {
-  adFrequency: DEFAULT_AD_FREQUENCY,
-  notice: DEFAULT_NOTICE,
-  requests: SEED_REQUESTS,
-  comments: SEED_COMMENTS,
-  uploads: [],
-  gifts: [],
-  uploadsEnabled: true,
-  referralCode: "WC-DEMO",
-  referrals: 0,
-  lastCheckIn: "",
-  checkInStreak: 0,
-  adUnitId: DEFAULT_AD_UNIT_ID,
-  watchSeconds: DEFAULT_WATCH_SECONDS,
-  watchReward: DEFAULT_WATCH_REWARD,
-};
-
-function clampFrequency(value: unknown): number {
-  const parsed = Math.round(Number(value));
-  if (!Number.isFinite(parsed)) return DEFAULT_AD_FREQUENCY;
-  return Math.min(MAX_AD_FREQUENCY, Math.max(MIN_AD_FREQUENCY, parsed));
-}
-
-function normalizeRequest(value: unknown): WithdrawRequest | null {
-  if (!value || typeof value !== "object") return null;
-  const raw = value as Record<string, unknown>;
-  if (typeof raw["id"] !== "string") return null;
-  return {
-    id: raw["id"],
-    user: typeof raw["user"] === "string" ? raw["user"] : "—",
-    phone: typeof raw["phone"] === "string" ? raw["phone"] : "",
-    method: raw["method"] === "Nagad" ? "Nagad" : "bKash",
-    amount: Number(raw["amount"]) || 0,
-    status:
-      raw["status"] === "approved"
-        ? "approved"
-        : raw["status"] === "rejected"
-          ? "rejected"
-          : "pending",
-    createdAt: Number(raw["createdAt"]) || 0,
-  };
-}
-
-function normalizeComment(value: unknown): VideoComment | null {
-  if (!value || typeof value !== "object") return null;
-  const raw = value as Record<string, unknown>;
-  if (typeof raw["id"] !== "string" || typeof raw["text"] !== "string")
-    return null;
-  return {
-    id: raw["id"],
-    videoId: typeof raw["videoId"] === "string" ? raw["videoId"] : "",
-    user: typeof raw["user"] === "string" ? raw["user"] : "@user",
-    text: raw["text"],
-    createdAt: Number(raw["createdAt"]) || 0,
-  };
-}
-
-function normalizeUpload(value: unknown): UploadedVideo | null {
-  if (!value || typeof value !== "object") return null;
-  const raw = value as Record<string, unknown>;
-  if (typeof raw["id"] !== "string" || typeof raw["url"] !== "string")
-    return null;
-  return {
-    id: raw["id"],
-    user: typeof raw["user"] === "string" ? raw["user"] : "@me",
-    caption: typeof raw["caption"] === "string" ? raw["caption"] : "",
-    url: raw["url"],
-    status:
-      raw["status"] === "approved"
-        ? "approved"
-        : raw["status"] === "rejected"
-          ? "rejected"
-          : "pending",
-    createdAt: Number(raw["createdAt"]) || 0,
-  };
-}
-
-function normalizeGift(value: unknown): GiftRecord | null {
-  if (!value || typeof value !== "object") return null;
-  const raw = value as Record<string, unknown>;
-  if (typeof raw["id"] !== "string") return null;
-  return {
-    id: raw["id"],
-    gift: typeof raw["gift"] === "string" ? raw["gift"] : "গিফট",
-    emoji: typeof raw["emoji"] === "string" ? raw["emoji"] : "🎁",
-    coins: Number(raw["coins"]) || 0,
-    creator: typeof raw["creator"] === "string" ? raw["creator"] : "@creator",
-    sender: typeof raw["sender"] === "string" ? raw["sender"] : "@আপনি",
-    createdAt: Number(raw["createdAt"]) || 0,
-  };
-}
-
-function makeReferralCode(): string {
-  return `WC-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-}
-
-function normalize(value: unknown): AppSettings {
-  if (!value || typeof value !== "object") return DEFAULTS;
-  const raw = value as Record<string, unknown>;
-  const storedRequests = raw["requests"];
-  const requests = Array.isArray(storedRequests)
-    ? storedRequests
-        .map(normalizeRequest)
-        .filter((r): r is WithdrawRequest => r !== null)
-    : SEED_REQUESTS;
-  const storedComments = raw["comments"];
-  const comments = Array.isArray(storedComments)
-    ? storedComments
-        .map(normalizeComment)
-        .filter((c): c is VideoComment => c !== null)
-    : SEED_COMMENTS;
-  const storedUploads = raw["uploads"];
-  const uploads = Array.isArray(storedUploads)
-    ? storedUploads
-        .map(normalizeUpload)
-        .filter((u): u is UploadedVideo => u !== null)
-    : [];
-  const storedGifts = raw["gifts"];
-  const gifts = Array.isArray(storedGifts)
-    ? storedGifts.map(normalizeGift).filter((g): g is GiftRecord => g !== null)
-    : [];
-  return {
-    adFrequency: clampFrequency(raw["adFrequency"]),
-    notice: typeof raw["notice"] === "string" ? raw["notice"] : DEFAULT_NOTICE,
-    requests,
-    comments,
-    uploads,
-    gifts,
-    uploadsEnabled: raw["uploadsEnabled"] !== false,
-    referralCode:
-      typeof raw["referralCode"] === "string" && raw["referralCode"].length > 0
-        ? raw["referralCode"]
-        : makeReferralCode(),
-    referrals: Number(raw["referrals"]) || 0,
-    lastCheckIn: typeof raw["lastCheckIn"] === "string" ? raw["lastCheckIn"] : "",
-    checkInStreak: Number(raw["checkInStreak"]) || 0,
-    adUnitId:
-      typeof raw["adUnitId"] === "string" && raw["adUnitId"].length > 0
-        ? raw["adUnitId"]
-        : DEFAULT_AD_UNIT_ID,
-    watchSeconds: clampInt(raw["watchSeconds"], 1, MAX_WATCH_SECONDS, DEFAULT_WATCH_SECONDS),
-    watchReward: clampInt(raw["watchReward"], 1, MAX_WATCH_REWARD, DEFAULT_WATCH_REWARD),
-  };
-}
-
-function readStore(): AppSettings {
-  if (typeof window === "undefined") return DEFAULTS;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS, referralCode: makeReferralCode() };
-    return normalize(JSON.parse(raw));
-  } catch {
-    return DEFAULTS;
-  }
-}
-
-let cache: AppSettings | null = null;
-const listeners = new Set<() => void>();
-
-function emit() {
-  for (const listener of listeners) listener();
-}
-
-function getSnapshot(): AppSettings {
-  if (cache === null) cache = readStore();
-  return cache;
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-function write(next: AppSettings) {
-  cache = next;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // Storage full or blocked — keep the in-memory value for this session.
-  }
-  emit();
-}
-
-function update(mutator: (current: AppSettings) => AppSettings) {
-  write(mutator(getSnapshot()));
-}
-
-if (typeof window !== "undefined") {
-  window.addEventListener(CHANGE_EVENT, () => {
-    cache = null;
-    emit();
-  });
-  window.addEventListener("storage", (event) => {
-    if (event.key === STORAGE_KEY) {
-      cache = null;
-      emit();
-    }
-  });
-}
-
-/** Settings + payouts, stable across server render and first client paint. */
-export function useAppSettings(): AppSettings {
-  const settings = useSyncExternalStore(subscribe, getSnapshot, () => DEFAULTS);
-  const hydrated = useHydrated();
-  return hydrated ? settings : DEFAULTS;
-}
-
-function useHydrated(): boolean {
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
-  return hydrated;
-}
-
-export function saveAdFrequency(value: number): boolean {
-  const parsed = Math.round(Number(value));
-  if (!Number.isFinite(parsed) || parsed < MIN_AD_FREQUENCY) return false;
-  update((current) => ({ ...current, adFrequency: clampFrequency(parsed) }));
-  return true;
-}
-
-export function saveNotice(text: string) {
-  const trimmed = text.trim();
-  update((current) => ({
-    ...current,
-    notice: trimmed.length > 0 ? trimmed.slice(0, 300) : DEFAULT_NOTICE,
-  }));
-}
-
-export function setRequestStatus(id: string, status: WithdrawStatus) {
-  update((current) => ({
-    ...current,
-    requests: current.requests.map((request) =>
-      request.id === id ? { ...request, status } : request,
-    ),
-  }));
-}
-
-export function submitWithdraw(input: {
+export interface WithdrawRequest {
+  id: string;
   user: string;
   phone: string;
-  method: WithdrawMethod;
+  method: string;
   amount: number;
-}) {
-  const id = `req-${Date.now().toString(36)}${Math.random()
-    .toString(36)
-    .slice(2, 6)}`;
-  update((current) => ({
-    ...current,
-    requests: [
-      {
-        id,
-        user: input.user,
-        phone: input.phone,
-        method: input.method,
-        amount: input.amount,
-        status: "pending",
-        createdAt: Date.now(),
-      },
-      ...current.requests,
-    ],
-  }));
+  status: WithdrawStatus;
+  createdAt: number;
 }
-
-/** Adds a comment to a video and returns it. */
-export function addComment(videoId: string, text: string, user = "@আপনি") {
-  const trimmed = text.trim().slice(0, 240);
-  if (trimmed.length === 0) return;
-  update((current) => ({
-    ...current,
-    comments: [
-      ...current.comments,
-      {
-        id: `c-${Date.now().toString(36)}`,
-        videoId,
-        user,
-        text: trimmed,
-        createdAt: Date.now(),
-      },
-    ],
-  }));
-}
-
-export function deleteComment(id: string) {
-  update((current) => ({
-    ...current,
-    comments: current.comments.filter((comment) => comment.id !== id),
-  }));
-}
-
-export function submitUpload(input: { caption: string; url: string; user: string }) {
-  update((current) => ({
-    ...current,
-    uploads: [
-      {
-        id: `up-${Date.now().toString(36)}`,
-        user: input.user,
-        caption: input.caption.trim().slice(0, 160),
-        url: input.url,
-        status: "pending",
-        createdAt: Date.now(),
-      },
-      ...current.uploads,
-    ],
-  }));
-}
-
-export function setUploadStatus(id: string, status: UploadStatus) {
-  update((current) => ({
-    ...current,
-    uploads: current.uploads.map((upload) =>
-      upload.id === id ? { ...upload, status } : upload,
-    ),
-  }));
-}
-
-export function setUploadsEnabled(enabled: boolean) {
-  update((current) => ({ ...current, uploadsEnabled: enabled }));
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-export function isCheckedInToday(settings: AppSettings): boolean {
-  return settings.lastCheckIn === today();
-}
-
-/** Daily check-in: awards points once per calendar day and keeps a streak. */
-export function claimCheckIn(): { ok: boolean; reward: number; streak: number } {
-  const current = getSnapshot();
-  if (current.lastCheckIn === today()) {
-    return { ok: false, reward: 0, streak: current.checkInStreak };
-  }
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-  const streak = current.lastCheckIn === yesterday ? current.checkInStreak + 1 : 1;
-  write({ ...current, lastCheckIn: today(), checkInStreak: streak });
-  return { ok: true, reward: CHECKIN_REWARD, streak };
-}
-
-/** Records a successful referral (a friend opened the app with this code). */
-export function addReferral(): number {
-  const current = getSnapshot();
-  const referrals = current.referrals + 1;
-  write({ ...current, referrals });
-  return referrals;
-}
-
-/** Records a sent gift for the history page and the creator dashboard. */
-export function recordGift(input: {
-  gift: string;
-  emoji: string;
-  coins: number;
-  creator: string;
-  sender?: string;
-}) {
-  update((current) => ({
-    ...current,
-    gifts: [
-      {
-        id: `g-${Date.now().toString(36)}`,
-        gift: input.gift,
-        emoji: input.emoji,
-        coins: input.coins,
-        creator: input.creator,
-        sender: input.sender ?? "@আপনি",
-        createdAt: Date.now(),
-      },
-      ...current.gifts,
-    ],
-  }));
-}
-
-/** AdMob ad unit / app IDs look like ca-app-pub-<16 digits>/<10 digits> or ~<10 digits>. */
-export const AD_UNIT_ID_PATTERN = /^ca-app-pub-\d{10,20}[/~]\d{6,12}$/;
-
-export function saveAdUnitId(value: string): boolean {
-  const trimmed = value.trim();
-  if (!AD_UNIT_ID_PATTERN.test(trimmed)) return false;
-  update((current) => ({ ...current, adUnitId: trimmed }));
-  return true;
-}
-
-/** Admin-controlled watch-time reward rule. */
-export function saveWatchRule(seconds: number, reward: number): boolean {
-  const s = Math.round(Number(seconds));
-  const r = Math.round(Number(reward));
-  if (!Number.isFinite(s) || s < 1 || s > MAX_WATCH_SECONDS) return false;
-  if (!Number.isFinite(r) || r < 1 || r > MAX_WATCH_REWARD) return false;
-  update((current) => ({ ...current, watchSeconds: s, watchReward: r }));
-  return true;
-}
-
-// ---------------- Deposit + Reach Booster ----------------
-
-/** Manual send-money deposits: ৳1 buys this many coins (matches recharge packs, 100 = ৳20). */
-export const COINS_PER_TAKA = 5;
-export const MIN_DEPOSIT = 10;
-
-export type DepositMethod = "bKash" | "Nagad" | "Rocket";
-export type BoostPack = "silver" | "gold";
-
-export const BOOST_PACKS: Record<BoostPack, { label: string; taka: number; views: number; featured: boolean }> = {
-  silver: { label: "সিলভার প্যাক", taka: 50, views: 1000, featured: false },
-  gold: { label: "গোল্ড প্যাক", taka: 150, views: 3000, featured: true },
-};
-
 export interface DepositRequest {
   id: string;
   user: string;
   amount: number;
   method: DepositMethod;
   trxId: string;
-  status: UploadStatus;
-  credited: boolean;
-  kind: "coins" | "boost";
-  pack?: BoostPack;
-  videoUrl?: string;
-  caption?: string;
-  promoLink?: string;
+  status: ReqStatus;
+  kind: DepositKind;
+  details: Record<string, unknown>;
+  createdAt: number;
+}
+export interface Promo {
+  id: string;
+  kind: "boost" | "ad";
+  user: string;
+  details: Record<string, unknown>;
+}
+export interface Profile {
+  id: string;
+  username: string;
+  coins: number;
+  points: number;
+  vipUntil: number | null;
+  blocked: boolean;
+  blockReason: string;
+  referralCode: string;
+  referrals: number;
+  lastCheckIn: string;
+  checkInStreak: number;
+}
+export interface Penalty {
+  id: string;
+  amount: number;
+  reason: string;
   createdAt: number;
 }
 
-export interface PaySettings {
+export interface AppSettings {
+  adFrequency: number;
+  notice: string;
+  adUnitId: string;
+  watchSeconds: number;
+  watchReward: number;
+  uploadsEnabled: boolean;
   numbers: Record<DepositMethod, string>;
   depositNotice: string;
-  deposits: DepositRequest[];
+  vipPrice: number;
+  vipDays: number;
+  vipBenefits: string;
+  adPricePerDay: number;
+  rules: string;
 }
 
-const PAY_KEY = "watchcoin.pay.v1";
-const PAY_DEFAULTS: PaySettings = {
+interface State {
+  ready: boolean;
+  authReady: boolean;
+  userId: string | null;
+  email: string;
+  settings: AppSettings;
+  comments: VideoComment[];
+  uploads: UploadedVideo[];
+  promos: Promo[];
+  vipNames: string[];
+  profile: Profile | null;
+  deposits: DepositRequest[];
+  gifts: GiftRecord[];
+  withdrawals: WithdrawRequest[];
+  penalties: Penalty[];
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  adFrequency: DEFAULT_AD_FREQUENCY,
+  notice: DEFAULT_NOTICE,
+  adUnitId: "ca-app-pub-xxxxxxxx~yyyyyyyy",
+  watchSeconds: 10,
+  watchReward: 1,
+  uploadsEnabled: true,
   numbers: { bKash: "01XXXXXXXXX", Nagad: "01XXXXXXXXX", Rocket: "01XXXXXXXXX" },
-  depositNotice:
-    "শুধু Send Money করুন। টাকা পাঠানোর পর সঠিক TrxID দিয়ে রিকোয়েস্ট দিন। এডমিন যাচাই করে কয়েন যোগ করবে।",
-  deposits: [],
+  depositNotice: DEFAULT_DEPOSIT_NOTICE,
+  vipPrice: 50,
+  vipDays: 30,
+  vipBenefits: DEFAULT_VIP_BENEFITS,
+  adPricePerDay: 100,
+  rules: DEFAULT_RULES,
 };
 
-function readPay(): PaySettings {
-  if (typeof window === "undefined") return PAY_DEFAULTS;
-  try {
-    const raw = window.localStorage.getItem(PAY_KEY);
-    if (!raw) return PAY_DEFAULTS;
-    const v = JSON.parse(raw) as Partial<PaySettings>;
-    return {
-      numbers: { ...PAY_DEFAULTS.numbers, ...(v.numbers ?? {}) },
-      depositNotice: typeof v.depositNotice === "string" ? v.depositNotice : PAY_DEFAULTS.depositNotice,
-      deposits: Array.isArray(v.deposits) ? v.deposits : [],
-    };
-  } catch {
-    return PAY_DEFAULTS;
-  }
-}
+const INITIAL: State = {
+  ready: false,
+  authReady: false,
+  userId: null,
+  email: "",
+  settings: DEFAULT_SETTINGS,
+  comments: [],
+  uploads: [],
+  promos: [],
+  vipNames: [],
+  profile: null,
+  deposits: [],
+  gifts: [],
+  withdrawals: [],
+  penalties: [],
+};
 
-let payCache: PaySettings | null = null;
-const payListeners = new Set<() => void>();
-function paySnapshot(): PaySettings {
-  if (payCache === null) payCache = readPay();
-  return payCache;
+let state: State = INITIAL;
+const listeners = new Set<() => void>();
+function set(patch: Partial<State>) {
+  state = { ...state, ...patch };
+  for (const l of listeners) l();
 }
-function paySubscribe(l: () => void) {
-  payListeners.add(l);
+function subscribe(l: () => void) {
+  listeners.add(l);
   return () => {
-    payListeners.delete(l);
+    listeners.delete(l);
   };
 }
-function payUpdate(mut: (c: PaySettings) => PaySettings) {
-  payCache = mut(paySnapshot());
-  try {
-    window.localStorage.setItem(PAY_KEY, JSON.stringify(payCache));
-  } catch {
-    // ignore
-  }
-  for (const l of payListeners) l();
+
+const ts = (v: string | null | undefined) => (v ? Date.parse(v) : 0);
+const asStatus = (v: string): ReqStatus => (v === "approved" || v === "rejected" ? v : "pending");
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+export function mapSettings(row: Record<string, unknown> | null): AppSettings {
+  if (!row) return DEFAULT_SETTINGS;
+  const nums = obj(row["pay_numbers"]);
+  const str = (k: string, fb: string) => (typeof row[k] === "string" && (row[k] as string).trim() ? (row[k] as string) : fb);
+  const num = (k: string, fb: number) => (typeof row[k] === "number" ? (row[k] as number) : fb);
+  return {
+    adFrequency: num("ad_frequency", DEFAULT_AD_FREQUENCY),
+    notice: str("notice", DEFAULT_NOTICE),
+    adUnitId: str("ad_unit_id", DEFAULT_SETTINGS.adUnitId),
+    watchSeconds: num("watch_seconds", 10),
+    watchReward: num("watch_reward", 1),
+    uploadsEnabled: row["uploads_enabled"] !== false,
+    numbers: {
+      bKash: typeof nums["bKash"] === "string" ? nums["bKash"] : "01XXXXXXXXX",
+      Nagad: typeof nums["Nagad"] === "string" ? nums["Nagad"] : "01XXXXXXXXX",
+      Rocket: typeof nums["Rocket"] === "string" ? nums["Rocket"] : "01XXXXXXXXX",
+    },
+    depositNotice: str("deposit_notice", DEFAULT_DEPOSIT_NOTICE),
+    vipPrice: num("vip_price", 50),
+    vipDays: num("vip_days", 30),
+    vipBenefits: str("vip_benefits", DEFAULT_VIP_BENEFITS),
+    adPricePerDay: num("ad_price_per_day", 100),
+    rules: str("rules", DEFAULT_RULES),
+  };
 }
-if (typeof window !== "undefined") {
-  window.addEventListener("storage", (e) => {
-    if (e.key === PAY_KEY) {
-      payCache = null;
-      for (const l of payListeners) l();
-    }
+
+export async function loadPublic() {
+  const [s, c, u, p, v] = await Promise.all([
+    supabase.from("app_settings").select("*").eq("id", 1).maybeSingle(),
+    supabase.from("comments").select("*").order("created_at", { ascending: true }).limit(1000),
+    supabase.from("uploads").select("*").order("created_at", { ascending: false }).limit(200),
+    supabase.rpc("feed_promos"),
+    supabase.rpc("vip_usernames"),
+  ]);
+  set({
+    ready: true,
+    settings: mapSettings((s.data as Record<string, unknown> | null) ?? null),
+    comments: (c.data ?? []).map((r) => ({
+      id: r.id,
+      videoId: r.video_id,
+      user: r.username,
+      text: r.text,
+      createdAt: ts(r.created_at),
+    })),
+    uploads: (u.data ?? []).map((r) => ({
+      id: r.id,
+      user: r.username,
+      caption: r.caption,
+      url: r.url,
+      status: asStatus(r.status),
+      createdAt: ts(r.created_at),
+    })),
+    promos: (p.data ?? []).map((r) => ({
+      id: r.id,
+      kind: r.kind === "ad" ? "ad" : "boost",
+      user: r.username,
+      details: obj(r.details),
+    })),
+    vipNames: (v.data ?? []) as string[],
   });
 }
 
-export function usePaySettings(): PaySettings {
-  const s = useSyncExternalStore(paySubscribe, paySnapshot, () => PAY_DEFAULTS);
+async function loadUser(userId: string, email: string) {
+  const fallbackName = "@" + (email.split("@")[0] || "user").slice(0, 20);
+  const { data: prof } = await supabase.rpc("ensure_profile", { _username: fallbackName });
+  const [d, g, w, pen] = await Promise.all([
+    supabase.from("deposits").select("*").order("created_at", { ascending: false }).limit(100),
+    supabase.from("gifts").select("*").order("created_at", { ascending: false }).limit(200),
+    supabase.from("withdrawals").select("*").order("created_at", { ascending: false }).limit(100),
+    supabase.from("penalties").select("*").order("created_at", { ascending: false }).limit(100),
+  ]);
+  const row = prof as Record<string, unknown> | null;
+  set({
+    profile: row
+      ? {
+          id: String(row["id"]),
+          username: String(row["username"] ?? fallbackName),
+          coins: Number(row["coins"]) || 0,
+          points: Number(row["points"]) || 0,
+          vipUntil: row["vip_until"] ? ts(String(row["vip_until"])) : null,
+          blocked: row["blocked"] === true,
+          blockReason: String(row["block_reason"] ?? ""),
+          referralCode: String(row["referral_code"] ?? ""),
+          referrals: Number(row["referrals"]) || 0,
+          lastCheckIn: String(row["last_checkin"] ?? ""),
+          checkInStreak: Number(row["checkin_streak"]) || 0,
+        }
+      : null,
+    deposits: (d.data ?? []).map((r) => ({
+      id: r.id,
+      user: r.username,
+      amount: r.amount,
+      method: r.method as DepositMethod,
+      trxId: r.trx_id,
+      status: asStatus(r.status),
+      kind: r.kind as DepositKind,
+      details: obj(r.details),
+      createdAt: ts(r.created_at),
+    })),
+    gifts: (g.data ?? []).map((r) => ({
+      id: r.id,
+      gift: r.gift,
+      emoji: r.emoji,
+      coins: r.coins,
+      creator: r.creator,
+      sender: "@আপনি",
+      createdAt: ts(r.created_at),
+    })),
+    withdrawals: (w.data ?? []).map((r) => ({
+      id: r.id,
+      user: r.username,
+      phone: r.phone,
+      method: r.method,
+      amount: r.amount,
+      status: asStatus(r.status),
+      createdAt: ts(r.created_at),
+    })),
+    penalties: (pen.data ?? []).map((r) => ({
+      id: r.id,
+      amount: r.amount,
+      reason: r.reason,
+      createdAt: ts(r.created_at),
+    })),
+  });
+  void userId;
+}
+
+export async function refresh() {
+  await loadPublic();
+  if (state.userId) await loadUser(state.userId, state.email);
+}
+
+let started = false;
+function start() {
+  if (started || typeof window === "undefined") return;
+  started = true;
+  void loadPublic();
+  supabase.auth.getSession().then(async ({ data }) => {
+    const user = data.session?.user;
+    set({ userId: user?.id ?? null, email: user?.email ?? "" });
+    if (user) await loadUser(user.id, user.email ?? "");
+    set({ authReady: true });
+  });
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (event !== "SIGNED_IN" && event !== "SIGNED_OUT" && event !== "USER_UPDATED") return;
+    const user = session?.user;
+    if (!user) {
+      set({ userId: null, email: "", profile: null, deposits: [], gifts: [], withdrawals: [], penalties: [], authReady: true });
+      return;
+    }
+    set({ userId: user.id, email: user.email ?? "" });
+    setTimeout(() => {
+      void loadUser(user.id, user.email ?? "").then(() => set({ authReady: true }));
+    }, 0);
+  });
+  window.addEventListener("focus", () => void refresh());
+}
+
+function useHydrated(): boolean {
+  const [h, setH] = useState(false);
+  useEffect(() => setH(true), []);
+  return h;
+}
+
+export function useStore(): State {
+  const s = useSyncExternalStore(subscribe, () => state, () => INITIAL);
   const hydrated = useHydrated();
-  return hydrated ? s : PAY_DEFAULTS;
+  useEffect(() => start(), []);
+  return hydrated ? s : INITIAL;
 }
 
-export function savePayConfig(numbers: Record<DepositMethod, string>, notice: string) {
-  payUpdate((c) => ({
-    ...c,
-    numbers: {
-      bKash: numbers.bKash.trim().slice(0, 20),
-      Nagad: numbers.Nagad.trim().slice(0, 20),
-      Rocket: numbers.Rocket.trim().slice(0, 20),
-    },
-    depositNotice: notice.trim().slice(0, 500) || PAY_DEFAULTS.depositNotice,
-  }));
+export function isVip(profile: Profile | null): boolean {
+  return Boolean(profile?.vipUntil && profile.vipUntil > Date.now());
 }
 
-export function submitDeposit(input: Omit<DepositRequest, "id" | "status" | "credited" | "createdAt">) {
-  payUpdate((c) => ({
-    ...c,
-    deposits: [
-      {
-        ...input,
-        id: `dep-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
-        status: "pending",
-        credited: false,
-        createdAt: Date.now(),
-      },
-      ...c.deposits,
-    ],
-  }));
+export function isCheckedInToday(profile: Profile | null): boolean {
+  if (!profile?.lastCheckIn) return false;
+  return profile.lastCheckIn === new Date().toISOString().slice(0, 10);
 }
 
-export function setDepositStatus(id: string, status: UploadStatus) {
-  payUpdate((c) => ({
-    ...c,
-    deposits: c.deposits.map((d) => (d.id === id ? { ...d, status } : d)),
-  }));
+// ---------------- mutations ----------------
+
+export async function addComment(videoId: string, text: string) {
+  const t = text.trim().slice(0, 240);
+  if (!t || !state.userId || !state.profile) return false;
+  const { error } = await supabase
+    .from("comments")
+    .insert({ video_id: videoId, user_id: state.userId, username: state.profile.username, text: t });
+  await loadPublic();
+  return !error;
 }
 
-/** Marks approved coin deposits as credited and returns the coins to add to the wallet. */
-export function collectApprovedDeposits(): number {
-  const pending = paySnapshot().deposits.filter(
-    (d) => d.kind === "coins" && d.status === "approved" && !d.credited,
-  );
-  if (pending.length === 0) return 0;
-  const ids = new Set(pending.map((d) => d.id));
-  payUpdate((c) => ({
-    ...c,
-    deposits: c.deposits.map((d) => (ids.has(d.id) ? { ...d, credited: true } : d)),
-  }));
-  return pending.reduce((sum, d) => sum + d.amount * COINS_PER_TAKA, 0);
+export async function submitUpload(caption: string, url: string) {
+  if (!state.userId || !state.profile) return false;
+  const { error } = await supabase.from("uploads").insert({
+    user_id: state.userId,
+    username: state.profile.username,
+    caption: caption.trim().slice(0, 160),
+    url: url.slice(0, 500),
+  });
+  await refresh();
+  return !error;
+}
+
+export async function submitDeposit(input: {
+  kind: DepositKind;
+  amount: number;
+  method: DepositMethod;
+  trxId: string;
+  details?: Record<string, string | number>;
+}): Promise<"ok" | "duplicate" | "error"> {
+  if (!state.userId || !state.profile) return "error";
+  const { error } = await supabase.from("deposits").insert({
+    user_id: state.userId,
+    username: state.profile.username,
+    kind: input.kind,
+    amount: input.amount,
+    method: input.method,
+    trx_id: input.trxId,
+    details: input.details ?? {},
+  });
+  await refresh();
+  if (error) return error.code === "23505" ? "duplicate" : "error";
+  return "ok";
+}
+
+export async function sendGift(gift: string, emoji: string, coins: number, creator: string) {
+  const { data, error } = await supabase.rpc("send_gift", {
+    _gift: gift,
+    _emoji: emoji,
+    _coins: coins,
+    _creator: creator,
+  });
+  await refresh();
+  return !error && data === true;
+}
+
+export async function claimCheckIn(): Promise<number> {
+  const { data, error } = await supabase.rpc("daily_checkin");
+  await refresh();
+  if (error) return 0;
+  return Number(data);
+}
+
+export async function claimReward(key: string, kind: "watch" | "ad"): Promise<number> {
+  const { data, error } = await supabase.rpc("claim_reward", { _key: key, _kind: kind });
+  if (!error && Number(data) > 0 && state.profile) {
+    set({ profile: { ...state.profile, points: state.profile.points + Number(data) } });
+  }
+  return error ? 0 : Number(data);
+}
+
+export async function requestWithdraw(phone: string, method: WithdrawMethod, amount: number) {
+  const { data, error } = await supabase.rpc("request_withdraw", {
+    _phone: phone,
+    _method: method,
+    _amount: amount,
+  });
+  await refresh();
+  return !error && data === true;
+}
+
+export async function applyReferral(code: string) {
+  const { data } = await supabase.rpc("apply_referral", { _code: code });
+  await refresh();
+  return data === true;
 }

@@ -26,31 +26,48 @@ import {
 } from "lucide-react";
 
 import { AdminGate } from "@/components/admin-gate";
+import { LogOut } from "lucide-react";
 import {
   CHECKIN_REWARD,
   REFERRAL_REWARD,
-  addComment,
-  addReferral,
-  claimCheckIn,
-  isCheckedInToday,
-  recordGift,
-  submitUpload,
-  submitWithdraw,
-  useAppSettings,
-  usePaySettings,
-  collectApprovedDeposits,
-  submitDeposit,
+  POINTS_PER_TAKA,
   BOOST_PACKS,
   COINS_PER_TAKA,
   MIN_DEPOSIT,
-  type AppSettings,
+  addComment,
+  applyReferral,
+  claimCheckIn,
+  claimReward,
+  isCheckedInToday,
+  isVip,
+  requestWithdraw,
+  sendGift,
+  submitDeposit,
+  submitUpload,
+  useStore,
+  type AppSettings as CloudSettings,
   type BoostPack,
+  type DepositKind,
   type DepositMethod,
-  type DepositRequest,
+  type GiftRecord,
+  type Penalty,
+  type Promo,
+  type UploadedVideo,
+  type VideoComment,
   type WithdrawMethod,
 } from "@/lib/app-store";
+import { supabase } from "@/integrations/supabase/client";
+import { lovable } from "@/integrations/lovable/index";
 import { suggestGifts, type GiftSuggestion } from "@/lib/ai.functions";
 import { bn } from "@/lib/format";
+
+/** The slice of user data the sheets below read. */
+type AppSettings = {
+  comments: VideoComment[];
+  gifts: GiftRecord[];
+  referralCode: string;
+  referrals: number;
+};
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -73,9 +90,7 @@ export const Route = createFileRoute("/")({
   component: HomeScreen,
 });
 
-const POINTS_PER_TAKA = 100;
 const MIN_WITHDRAW = 50;
-const START_COINS = 100;
 
 const GIFTS = [
   { emoji: "🌹", name: "গোলাপ", label: "গোলাপ ফুল 🌹", cost: 10 },
@@ -101,6 +116,8 @@ type FeedItem =
       title: string;
       duration: number;
       sponsor: string;
+      mediaUrl?: string;
+      link?: string;
     };
 
 const VIDEO_POOL = [
@@ -152,25 +169,38 @@ const VIDEO_QUEUE = Array.from(
   .flat()
   .slice(0, TOTAL_VIDEOS);
 
-/** Builds the feed: admin-approved user uploads first, then one forced ad after every N videos. */
-function buildFeed(settings: AppSettings, deposits: DepositRequest[]): FeedItem[] {
+const str = (v: unknown) => (typeof v === "string" ? v : "");
+
+/** Builds the feed: boosts on top, approved uploads, then one forced ad after every N videos
+ * (VIP members see half as many ads). Forced ad slots rotate through approved advertiser ads. */
+function buildFeed(
+  settings: CloudSettings,
+  uploads: UploadedVideo[],
+  promos: Promo[],
+  vip: boolean,
+): FeedItem[] {
   const items: FeedItem[] = [];
   let videosSinceAd = 0;
+  const frequency = vip ? settings.adFrequency * 2 : settings.adFrequency;
 
-  // Accepted Reach Booster videos go to the very top (gold before silver).
-  const boosted: Omit<Extract<FeedItem, { type: "video" }>, "id" | "type">[] = deposits
-    .filter((d) => d.kind === "boost" && d.status === "approved" && d.videoUrl)
-    .sort((a, b) => (a.pack === "gold" ? 0 : 1) - (b.pack === "gold" ? 0 : 1))
-    .map((d) => ({
-      url: d.videoUrl ?? "",
-      user: d.user,
-      caption: d.caption ?? "",
-      likes: 0,
-      sponsored: d.pack ?? "silver",
-      ...(d.promoLink ? { promoLink: d.promoLink } : {}),
-    }));
+  const boosted: Omit<Extract<FeedItem, { type: "video" }>, "id" | "type">[] = promos
+    .filter((p) => p.kind === "boost" && str(p.details["videoUrl"]))
+    .sort((a, b) => (a.details["pack"] === "gold" ? 0 : 1) - (b.details["pack"] === "gold" ? 0 : 1))
+    .map((p) => {
+      const link = str(p.details["promoLink"]);
+      return {
+        url: str(p.details["videoUrl"]),
+        user: p.user,
+        caption: str(p.details["caption"]),
+        likes: 0,
+        sponsored: p.details["pack"] === "gold" ? ("gold" as const) : ("silver" as const),
+        ...(link ? { promoLink: link } : {}),
+      };
+    });
 
-  const approved = settings.uploads
+  const ads = promos.filter((p) => p.kind === "ad" && str(p.details["mediaUrl"]));
+
+  const approved = uploads
     .filter((upload) => upload.status === "approved")
     .map((upload) => ({
       url: upload.url,
@@ -180,18 +210,24 @@ function buildFeed(settings: AppSettings, deposits: DepositRequest[]): FeedItem[
     }));
 
   const queue = [...boosted, ...approved, ...VIDEO_QUEUE];
+  let adCount = 0;
 
   queue.forEach((video, index) => {
     items.push({ id: `v-${index}`, type: "video", ...video });
     videosSinceAd += 1;
 
-    if (videosSinceAd >= settings.adFrequency) {
+    if (videosSinceAd >= frequency) {
+      const paid = ads.length > 0 ? ads[adCount % ads.length] : undefined;
+      adCount += 1;
+      const link = paid ? str(paid.details["link"]) : "";
       items.push({
         id: `ad-${index}`,
         type: "forced_ad",
-        title: "স্পন্সরড এডভার্টাইজমেন্ট",
+        title: paid ? str(paid.details["title"]) || "বিজ্ঞাপন" : "স্পন্সরড এডভার্টাইজমেন্ট",
         duration: AD_DURATION,
-        sponsor: "WatchCoin Partner",
+        sponsor: paid ? paid.user : "WatchCoin Partner",
+        ...(paid ? { mediaUrl: str(paid.details["mediaUrl"]) } : {}),
+        ...(link ? { link } : {}),
       });
       videosSinceAd = 0;
     }
@@ -231,36 +267,57 @@ type Sheet =
   | "recharge"
   | "deposit"
   | "boost"
+  | "ad"
+  | "vip"
   | "upload"
   | "referral"
   | "history"
-  | "earnings";
+  | "earnings"
+  | "rules";
 
 function WatchEarnApp() {
-  const [points, setPoints] = useState(0);
-  const [balance, setBalance] = useState(0);
+  const store = useStore();
+  if (!store.authReady) {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-background text-sm font-bold text-foreground">
+        লোড হচ্ছে...
+      </main>
+    );
+  }
+  if (!store.userId) return <AuthScreen />;
+  if (store.profile?.blocked) {
+    return <BlockedScreen reason={store.profile.blockReason} rules={store.settings.rules} />;
+  }
+  return <SignedInApp />;
+}
+
+function SignedInApp() {
+  const store = useStore();
+  const settings = store.settings;
+  const profile = store.profile;
+  const vip = isVip(profile);
+  const points = profile?.points ?? 0;
+  const balance = points / POINTS_PER_TAKA;
+  const coins = profile?.coins ?? 0;
   const [currentIndex, setCurrentIndex] = useState(0);
   const [muted, setMuted] = useState(true);
   const [rewarded, setRewarded] = useState<Record<string, boolean>>({});
   const [adLocked, setAdLocked] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [coins, setCoins] = useState(START_COINS);
   const [giftFor, setGiftFor] = useState<string | null>(null);
   const [commentsFor, setCommentsFor] = useState<string | null>(null);
   const [sheet, setSheet] = useState<Sheet>("none");
-  const settings = useAppSettings();
-  const pay = usePaySettings();
-  const feed = useMemo(() => buildFeed(settings, pay.deposits), [settings, pay.deposits]);
-
-  // Admin-accepted coin deposits land in the wallet automatically.
-  useEffect(() => {
-    const add = collectApprovedDeposits();
-    if (add > 0) {
-      setCoins((c) => c + add);
-      setToast(`ডিপোজিট এপ্রুভ হয়েছে! +${bn(add)} কয়েন যোগ হয়েছে`);
-      window.setTimeout(() => setToast(null), 2800);
-    }
-  }, [pay.deposits]);
+  const feed = useMemo(
+    () => buildFeed(settings, store.uploads, store.promos, vip),
+    [settings, store.uploads, store.promos, vip],
+  );
+  const view: AppSettings = {
+    comments: store.comments,
+    gifts: store.gifts,
+    referralCode: profile?.referralCode ?? "",
+    referrals: profile?.referrals ?? 0,
+  };
+  const vipNames = useMemo(() => new Set(store.vipNames), [store.vipNames]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -271,27 +328,27 @@ function WatchEarnApp() {
   }, []);
 
   const award = useCallback(
-    (id: string, amount: number) => {
-      if (rewarded[id]) return;
-      setRewarded((r) => ({ ...r, [id]: true }));
-      setPoints((p) => p + amount);
-      setBalance((b) => b + amount / POINTS_PER_TAKA);
+    (key: string, kind: "watch" | "ad") => {
+      if (rewarded[key]) return;
+      setRewarded((r) => ({ ...r, [key]: true }));
+      void claimReward(key, kind).then((amt) => {
+        if (amt > 0) notify(`+${bn(amt)} পয়েন্ট${vip ? " (VIP ×২)" : ""}`);
+      });
     },
-    [rewarded],
+    [rewarded, notify, vip],
   );
 
   // রেফারেল লিংক দিয়ে অ্যাপ খুললে একবার বোনাস
   useEffect(() => {
     const ref = new URLSearchParams(window.location.search).get("ref");
-    if (!ref) return;
-    const key = `watchcoin.ref.${ref}`;
+    if (!ref || !profile) return;
+    const key = `watchcoin.ref.done`;
     if (window.localStorage.getItem(key)) return;
     window.localStorage.setItem(key, "1");
-    addReferral();
-    setPoints((p) => p + REFERRAL_REWARD);
-    setBalance((b) => b + REFERRAL_REWARD / POINTS_PER_TAKA);
-    notify(`রেফারেল বোনাস +${bn(REFERRAL_REWARD)} পয়েন্ট যোগ হয়েছে।`);
-  }, [notify]);
+    void applyReferral(ref).then((ok) => {
+      if (ok) notify(`রেফারেল বোনাস +${bn(REFERRAL_REWARD)} পয়েন্ট যোগ হয়েছে।`);
+    });
+  }, [profile, notify]);
 
   // কোন আইটেমটি স্ক্রিনে আছে তা ট্র্যাক করা
   useEffect(() => {
@@ -317,23 +374,23 @@ function WatchEarnApp() {
     setAdLocked(current?.type === "forced_ad" && !rewarded[current.id]);
   }, [current, rewarded]);
 
-  const checkedIn = isCheckedInToday(settings);
+  const checkedIn = isCheckedInToday(profile);
 
-  const doCheckIn = () => {
-    const result = claimCheckIn();
-    if (!result.ok) {
+  const doCheckIn = async () => {
+    if (checkedIn) {
       notify("আজকের চেক-ইন আগেই নেওয়া হয়েছে। কাল আবার আসুন।");
       return;
     }
-    setPoints((p) => p + result.reward);
-    setBalance((b) => b + result.reward / POINTS_PER_TAKA);
-    notify(
-      `ডেইলি চেক-ইন +${bn(result.reward)} পয়েন্ট · স্ট্রিক ${bn(result.streak)} দিন`,
-    );
+    const streak = await claimCheckIn();
+    if (streak <= 0) {
+      notify("আজকের চেক-ইন আগেই নেওয়া হয়েছে। কাল আবার আসুন।");
+      return;
+    }
+    notify(`ডেইলি চেক-ইন +${bn(CHECKIN_REWARD)} পয়েন্ট · স্ট্রিক ${bn(streak)} দিন`);
   };
 
   const share = async (item: Extract<FeedItem, { type: "video" }>) => {
-    const url = `${window.location.origin}/?ref=${settings.referralCode}`;
+    const url = `${window.location.origin}/?ref=${view.referralCode}`;
     const text = `${item.user} এর ভিডিও দেখুন — WatchCoin`;
     try {
       if (navigator.share) {
@@ -360,7 +417,7 @@ function WatchEarnApp() {
                 {bn(points)} পয়েন্ট
               </span>
               <span className="text-white/40">|</span>
-              <span className="text-xs font-extrabold text-coin">
+              <span className={`text-xs font-extrabold ${balance < 0 ? "text-destructive" : "text-coin"}`}>
                 ৳{bn(balance.toFixed(2))}
               </span>
             </div>
@@ -374,15 +431,31 @@ function WatchEarnApp() {
           </div>
 
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 rounded-full border border-coin/40 bg-black/60 px-3 py-1 text-xs font-extrabold text-coin backdrop-blur">
-              🪙 {bn(coins)} কয়েন
+            <div className="flex min-w-0 items-center gap-1.5">
+              <div className="flex items-center gap-1.5 rounded-full border border-coin/40 bg-black/60 px-3 py-1 text-xs font-extrabold text-coin backdrop-blur">
+                🪙 {bn(coins)}
+              </div>
+              <button
+                onClick={() => setSheet("vip")}
+                className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${
+                  vip ? "bg-coin text-coin-foreground" : "border border-coin/50 bg-black/60 text-coin"
+                }`}
+              >
+                👑 {vip ? "VIP" : "VIP নিন"}
+              </button>
+              <button
+                onClick={() => setSheet("rules")}
+                className="rounded-full border border-white/20 bg-black/60 px-2.5 py-1 text-[10px] font-bold text-white"
+              >
+                📜 নিয়ম
+              </button>
             </div>
             <button
               onClick={() => setSheet("recharge")}
-              className="flex items-center gap-1 rounded-full bg-coin px-3 py-1 text-xs font-extrabold text-coin-foreground shadow-lg transition-transform active:scale-95"
+              className="flex shrink-0 items-center gap-1 rounded-full bg-coin px-3 py-1 text-xs font-extrabold text-coin-foreground shadow-lg transition-transform active:scale-95"
             >
               <Plus className="size-3.5" />
-              কয়েন রিচার্জ
+              রিচার্জ
             </button>
           </div>
         </header>
@@ -408,18 +481,15 @@ function WatchEarnApp() {
                   ad={item}
                   active={currentIndex === index}
                   done={Boolean(rewarded[item.id])}
-                  onComplete={() => {
-                    award(item.id, 5);
-                    notify("বিজ্ঞাপন সম্পন্ন! +৫ পয়েন্ট যোগ হয়েছে");
-                  }}
+                  onComplete={() => award(item.id, "ad")}
                 />
               ) : (
                 <VideoFeedCard
-                  video={item}
+                  video={{ ...item, user: vipNames.has(item.user) ? `${item.user} 👑` : item.user }}
                   active={currentIndex === index}
                   muted={muted}
                   commentCount={
-                    settings.comments.filter((c) => c.videoId === item.id).length
+                    store.comments.filter((c) => c.videoId === item.id).length
                   }
                   onToggleMute={() => setMuted((m) => !m)}
                   onGift={() => setGiftFor(item.user)}
@@ -427,10 +497,7 @@ function WatchEarnApp() {
                   onShare={() => void share(item)}
                   watchSeconds={settings.watchSeconds}
                   done={Boolean(rewarded[item.id])}
-                  onWatched={() => {
-                    award(item.id, settings.watchReward);
-                    notify(`+${bn(settings.watchReward)} পয়েন্ট`);
-                  }}
+                  onWatched={() => award(item.id, "watch")}
                 />
               )}
             </div>
@@ -443,7 +510,7 @@ function WatchEarnApp() {
             icon={<CalendarCheck className="size-4" />}
             label={checkedIn ? "চেক-ইন ✓" : "চেক-ইন"}
             highlight={!checkedIn}
-            onClick={doCheckIn}
+            onClick={() => void doCheckIn()}
           />
           <TabButton
             icon={<Upload className="size-4" />}
@@ -464,6 +531,11 @@ function WatchEarnApp() {
             icon={<BarChart3 className="size-4" />}
             label="আয়"
             onClick={() => setSheet("earnings")}
+          />
+          <TabButton
+            icon={<LogOut className="size-4" />}
+            label="লগআউট"
+            onClick={() => void supabase.auth.signOut()}
           />
         </nav>
 
@@ -486,7 +558,7 @@ function WatchEarnApp() {
         {commentsFor && (
           <CommentsSheet
             videoId={commentsFor}
-            settings={settings}
+            settings={view}
             onClose={() => setCommentsFor(null)}
           />
         )}
@@ -497,36 +569,29 @@ function WatchEarnApp() {
             coins={coins}
             onClose={() => setGiftFor(null)}
             onSend={(gift) => {
+              const creator = giftFor;
+              setGiftFor(null);
               if (coins < gift.cost) {
-                notify(
-                  "আপনার পর্যাপ্ত কয়েন নেই! বিকাশ/নগদ দিয়ে কয়েন রিচার্জ করুন।",
-                );
-                setGiftFor(null);
+                notify("আপনার পর্যাপ্ত কয়েন নেই! বিকাশ/নগদ দিয়ে কয়েন রিচার্জ করুন।");
                 setSheet("recharge");
                 return;
               }
-              setCoins((c) => c - gift.cost);
-              recordGift({
-                gift: gift.name,
-                emoji: gift.emoji,
-                coins: gift.cost,
-                creator: giftFor,
+              void sendGift(gift.name, gift.emoji, gift.cost, creator).then((ok) => {
+                notify(
+                  ok
+                    ? `অভিনন্দন! আপনি ক্রিয়েটরকে একটি ${gift.label} পাঠিয়েছেন।`
+                    : "গিফট পাঠানো যায়নি, আবার চেষ্টা করুন।",
+                );
               });
-              setGiftFor(null);
-              notify(`অভিনন্দন! আপনি ক্রিয়েটরকে একটি ${gift.label} পাঠিয়েছেন।`);
             }}
           />
         )}
 
         {sheet === "recharge" && (
-          <RechargeModal
-            onClose={() => setSheet("none")}
-            onDeposit={() => setSheet("deposit")}
-            onBoost={() => setSheet("boost")}
-          />
+          <RechargeModal onClose={() => setSheet("none")} onPick={(m) => setSheet(m)} />
         )}
 
-        {(sheet === "deposit" || sheet === "boost") && (
+        {(sheet === "deposit" || sheet === "boost" || sheet === "ad" || sheet === "vip") && (
           <DepositSheet
             mode={sheet}
             onClose={() => setSheet("none")}
@@ -538,28 +603,33 @@ function WatchEarnApp() {
           />
         )}
 
+        {sheet === "rules" && (
+          <RulesSheet rules={settings.rules} penalties={store.penalties} onClose={() => setSheet("none")} />
+        )}
+
         {sheet === "upload" && (
           <UploadSheet
             enabled={settings.uploadsEnabled}
             onClose={() => setSheet("none")}
             onSubmit={(caption, url) => {
-              submitUpload({ caption, url, user: "@আমি" });
               setSheet("none");
-              notify("ভিডিও পাঠানো হয়েছে, এডমিন অনুমোদন দিলে ফিডে আসবে।");
+              void submitUpload(caption, url).then((ok) =>
+                notify(ok ? "ভিডিও পাঠানো হয়েছে, এডমিন অনুমোদন দিলে ফিডে আসবে।" : "পাঠানো যায়নি, আবার চেষ্টা করুন।"),
+              );
             }}
           />
         )}
 
         {sheet === "referral" && (
-          <ReferralSheet settings={settings} onClose={() => setSheet("none")} onCopied={notify} />
+          <ReferralSheet settings={view} onClose={() => setSheet("none")} onCopied={notify} />
         )}
 
         {sheet === "history" && (
-          <HistorySheet settings={settings} onClose={() => setSheet("none")} />
+          <HistorySheet settings={view} onClose={() => setSheet("none")} />
         )}
 
         {sheet === "earnings" && (
-          <EarningsSheet settings={settings} onClose={() => setSheet("none")} />
+          <EarningsSheet settings={view} onClose={() => setSheet("none")} />
         )}
 
         {sheet === "withdraw" && (
@@ -568,16 +638,13 @@ function WatchEarnApp() {
             notice={settings.notice}
             onClose={() => setSheet("none")}
             onSubmit={(amount, method, account) => {
-              submitWithdraw({
-                user: `User ${account.slice(-4)}`,
-                phone: account,
-                method,
-                amount,
-              });
-              setBalance((b) => b - amount);
               setSheet("none");
-              notify(
-                `৳${bn(amount)} উইথড্র রিকোয়েস্ট পাঠানো হয়েছে (${method}: ${account})`,
+              void requestWithdraw(account, method, amount).then((ok) =>
+                notify(
+                  ok
+                    ? `৳${bn(amount)} উইথড্র রিকোয়েস্ট পাঠানো হয়েছে (${method}: ${account})`
+                    : "উইথড্র রিকোয়েস্ট পাঠানো যায়নি।",
+                ),
               );
             }}
           />
@@ -642,17 +709,44 @@ function ForcedAdCard({
       <span className="rounded-full border border-border bg-surface px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-foreground/80">
         Sponsored Ad
       </span>
-      <div className="bg-brand-gradient flex size-20 items-center justify-center rounded-3xl shadow-2xl">
-        <ShieldAlert className="size-9 text-brand-foreground" />
-      </div>
+      {ad.mediaUrl ? (
+        /\.(mp4|webm|mov|m4v)(\?|$)/i.test(ad.mediaUrl) ? (
+          <video
+            src={ad.mediaUrl}
+            autoPlay={active}
+            muted
+            playsInline
+            loop
+            className="max-h-[45%] w-full rounded-2xl object-contain"
+          />
+        ) : (
+          <img src={ad.mediaUrl} alt={ad.title} className="max-h-[45%] w-full rounded-2xl object-contain" />
+        )
+      ) : (
+        <div className="bg-brand-gradient flex size-20 items-center justify-center rounded-3xl shadow-2xl">
+          <ShieldAlert className="size-9 text-brand-foreground" />
+        </div>
+      )}
       <h2 className="text-xl font-extrabold text-foreground">{ad.title}</h2>
-      <p className="max-w-xs text-sm font-medium leading-relaxed text-foreground/85">
-        বিজ্ঞাপনটি সম্পূর্ণ না দেখলে পরবর্তী ভিডিও দেখা বা পয়েন্ট অর্জন করা
-        সম্ভব নয়।
-      </p>
+      {!ad.mediaUrl && (
+        <p className="max-w-xs text-sm font-medium leading-relaxed text-foreground/85">
+          বিজ্ঞাপনটি সম্পূর্ণ না দেখলে পরবর্তী ভিডিও দেখা বা পয়েন্ট অর্জন করা
+          সম্ভব নয়।
+        </p>
+      )}
       <p className="text-[11px] font-semibold text-foreground/70">
         স্পন্সর: {ad.sponsor}
       </p>
+      {ad.link && (
+        <a
+          href={ad.link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-full bg-coin px-4 py-1.5 text-xs font-extrabold text-coin-foreground"
+        >
+          🔗 বিস্তারিত দেখুন
+        </a>
+      )}
 
       <div className="w-full max-w-xs">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
@@ -1526,44 +1620,37 @@ function GiftModal({
 
 function RechargeModal({
   onClose,
-  onDeposit,
-  onBoost,
+  onPick,
 }: {
   onClose: () => void;
-  onDeposit: () => void;
-  onBoost: () => void;
+  onPick: (mode: PayMode) => void;
 }) {
+  const options: { mode: PayMode; emoji: string; title: string; text: string; tone: string }[] = [
+    { mode: "deposit", emoji: "🪙", title: "কয়েন ডিপোজিট", text: "সেন্ডমানি করে TrxID দিন, এডমিন এপ্রুভ করলে কয়েন যোগ হবে", tone: "border-coin/40 text-coin" },
+    { mode: "vip", emoji: "👑", title: "VIP মেম্বারশিপ", text: "কম বিজ্ঞাপন, দ্বিগুণ পয়েন্ট, VIP ব্যাজ", tone: "border-coin/40 text-coin" },
+    { mode: "boost", emoji: "🚀", title: "Reach Booster", text: "আপনার ভিডিও/পেজ সবার ফিডের উপরে দেখান", tone: "border-primary/40 text-primary" },
+    { mode: "ad", emoji: "📢", title: "বিজ্ঞাপন দিন", text: "আপনার ব্যবসার ছবি বা ভিডিও বিজ্ঞাপন সবাইকে দেখান", tone: "border-accent/40 text-accent" },
+  ];
   return (
     <SheetShell
-      title="কয়েন কিনুন ও বুস্ট করুন"
-      subtitle={`বিকাশ/নগদ/রকেটে সেন্ডমানি করুন · ৳১ = ${bn(COINS_PER_TAKA)} কয়েন`}
+      title="কয়েন, VIP ও বিজ্ঞাপন"
+      subtitle="বিকাশ/নগদ/রকেটে সেন্ডমানি করুন"
       onClose={onClose}
     >
       <div className="space-y-3">
-        <button
-          onClick={onDeposit}
-          className="flex w-full items-center gap-3 rounded-2xl border border-coin/40 bg-secondary p-4 text-left active:scale-95"
-        >
-          <span className="text-3xl">🪙</span>
-          <span>
-            <span className="block text-sm font-extrabold text-coin">কয়েন ডিপোজিট</span>
-            <span className="block text-[11px] font-semibold text-foreground/80">
-              সেন্ডমানি করে TrxID দিন, এডমিন এপ্রুভ করলে কয়েন যোগ হবে
+        {options.map((o) => (
+          <button
+            key={o.mode}
+            onClick={() => onPick(o.mode)}
+            className={`flex w-full items-center gap-3 rounded-2xl border bg-secondary p-4 text-left active:scale-95 ${o.tone}`}
+          >
+            <span className="text-3xl">{o.emoji}</span>
+            <span>
+              <span className="block text-sm font-extrabold">{o.title}</span>
+              <span className="block text-[11px] font-semibold text-foreground/80">{o.text}</span>
             </span>
-          </span>
-        </button>
-        <button
-          onClick={onBoost}
-          className="flex w-full items-center gap-3 rounded-2xl border border-primary/40 bg-secondary p-4 text-left active:scale-95"
-        >
-          <span className="text-3xl">🚀</span>
-          <span>
-            <span className="block text-sm font-extrabold text-primary">Reach Booster</span>
-            <span className="block text-[11px] font-semibold text-foreground/80">
-              আপনার ভিডিও/পেজ সবার ফিডের উপরে দেখান
-            </span>
-          </span>
-        </button>
+          </button>
+        ))}
       </div>
     </SheetShell>
   );
@@ -1571,29 +1658,53 @@ function RechargeModal({
 
 const DEPOSIT_METHODS: DepositMethod[] = ["bKash", "Nagad", "Rocket"];
 
+type PayMode = "deposit" | "boost" | "ad" | "vip";
+
+const KIND_OF: Record<PayMode, DepositKind> = { deposit: "coins", boost: "boost", ad: "ad", vip: "vip" };
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value.trim());
+    return u.protocol === "https:" || u.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function DepositSheet({
   mode,
   onClose,
   onCopied,
   onSubmitted,
 }: {
-  mode: "deposit" | "boost";
+  mode: PayMode;
   onClose: () => void;
   onCopied: (msg: string) => void;
   onSubmitted: (msg: string) => void;
 }) {
-  const pay = usePaySettings();
+  const store = useStore();
+  const s = store.settings;
   const [method, setMethod] = useState<DepositMethod>("bKash");
   const [pack, setPack] = useState<BoostPack>("silver");
   const [amount, setAmount] = useState("");
+  const [days, setDays] = useState("3");
   const [trxId, setTrxId] = useState("");
-  const [name, setName] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const [caption, setCaption] = useState("");
   const [promoLink, setPromoLink] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isBoost = mode === "boost";
-  const number = pay.numbers[method];
+  const number = s.numbers[method];
+  const dayCount = Math.max(1, Math.min(60, Math.round(Number(days)) || 1));
+
+  const price =
+    mode === "boost"
+      ? BOOST_PACKS[pack].taka
+      : mode === "vip"
+        ? s.vipPrice
+        : mode === "ad"
+          ? s.adPricePerDay * dayCount
+          : Math.round(Number(amount));
 
   const copy = async () => {
     try {
@@ -1604,12 +1715,10 @@ function DepositSheet({
     }
   };
 
-  const submit = (event: { preventDefault: () => void }) => {
+  const submit = async (event: { preventDefault: () => void }) => {
     event.preventDefault();
-    const amt = isBoost ? BOOST_PACKS[pack].taka : Math.round(Number(amount));
     const trx = trxId.trim().toUpperCase();
-    const user = name.trim() || "@আমি";
-    if (!isBoost && (!Number.isFinite(amt) || amt < MIN_DEPOSIT || amt > 50000)) {
+    if (mode === "deposit" && (!Number.isFinite(price) || price < MIN_DEPOSIT || price > 50000)) {
       setError(`সর্বনিম্ন ৳${bn(MIN_DEPOSIT)} দিন।`);
       return;
     }
@@ -1617,57 +1726,87 @@ function DepositSheet({
       setError("সঠিক Transaction ID (TrxID) দিন।");
       return;
     }
-    if (pay.deposits.some((d) => d.trxId === trx)) {
+    if ((mode === "boost" || mode === "ad") && !isHttpUrl(videoUrl)) {
+      setError(mode === "ad" ? "বিজ্ঞাপনের ছবি বা ভিডিওর সঠিক লিংক দিন (https://...)।" : "সঠিক ভিডিও লিংক দিন (https://...)।");
+      return;
+    }
+    if (promoLink.trim() && !isHttpUrl(promoLink)) {
+      setError("লিংক https:// দিয়ে শুরু করুন।");
+      return;
+    }
+    const details: Record<string, string | number> = {};
+    if (mode === "boost") {
+      details["pack"] = pack;
+      details["videoUrl"] = videoUrl.trim();
+      details["caption"] = caption.trim().slice(0, 160);
+      if (promoLink.trim()) details["promoLink"] = promoLink.trim().slice(0, 200);
+    }
+    if (mode === "ad") {
+      details["mediaUrl"] = videoUrl.trim();
+      details["title"] = caption.trim().slice(0, 80) || "বিজ্ঞাপন";
+      details["days"] = dayCount;
+      if (promoLink.trim()) details["link"] = promoLink.trim().slice(0, 200);
+    }
+    if (mode === "vip") details["days"] = s.vipDays;
+    setBusy(true);
+    const result = await submitDeposit({ kind: KIND_OF[mode], amount: price, method, trxId: trx, details });
+    setBusy(false);
+    if (result === "duplicate") {
       setError("এই TrxID আগেই ব্যবহার হয়েছে।");
       return;
     }
-    if (isBoost) {
-      try {
-        const u = new URL(videoUrl.trim());
-        if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error();
-      } catch {
-        setError("সঠিক ভিডিও লিংক দিন (https://...)।");
-        return;
-      }
-      if (promoLink.trim() && !/^https?:\/\//.test(promoLink.trim())) {
-        setError("ফেসবুক/ইউটিউব লিংক https:// দিয়ে শুরু করুন।");
-        return;
-      }
+    if (result === "error") {
+      setError("রিকোয়েস্ট পাঠানো যায়নি, আবার চেষ্টা করুন।");
+      return;
     }
-    submitDeposit({
-      user: user.slice(0, 40),
-      amount: amt,
-      method,
-      trxId: trx,
-      kind: isBoost ? "boost" : "coins",
-      ...(isBoost
-        ? {
-            pack,
-            videoUrl: videoUrl.trim(),
-            caption: caption.trim().slice(0, 160),
-            ...(promoLink.trim() ? { promoLink: promoLink.trim().slice(0, 200) } : {}),
-          }
-        : {}),
-    });
     onSubmitted(
-      isBoost
+      mode === "boost"
         ? "বুস্ট রিকোয়েস্ট পাঠানো হয়েছে, এডমিন যাচাই করলে ভিডিও উপরে দেখাবে।"
-        : `৳${bn(amt)} ডিপোজিট রিকোয়েস্ট পাঠানো হয়েছে।`,
+        : mode === "ad"
+          ? "বিজ্ঞাপন রিকোয়েস্ট পাঠানো হয়েছে, এডমিন অনুমোদন দিলে ফিডে দেখাবে।"
+          : mode === "vip"
+            ? "VIP রিকোয়েস্ট পাঠানো হয়েছে, এডমিন যাচাই করলে চালু হবে।"
+            : `৳${bn(price)} ডিপোজিট রিকোয়েস্ট পাঠানো হয়েছে।`,
     );
   };
 
   const field =
     "w-full rounded-xl border border-border bg-secondary px-3 py-2 text-sm font-semibold text-foreground placeholder:text-muted-foreground";
-  const mine = pay.deposits.filter((d) => d.kind === (isBoost ? "boost" : "coins")).slice(0, 5);
+  const mine = store.deposits.filter((d) => d.kind === KIND_OF[mode]).slice(0, 5);
+  const title =
+    mode === "boost" ? "🚀 Reach Booster" : mode === "ad" ? "📢 বিজ্ঞাপন দিন" : mode === "vip" ? "👑 VIP মেম্বারশিপ" : "🪙 কয়েন ডিপোজিট";
+  const subtitle =
+    mode === "boost"
+      ? "ভিডিও প্রমোশন ও স্পনসরশিপ প্যাকেজ"
+      : mode === "ad"
+        ? `প্রতিদিন ৳${bn(s.adPricePerDay)} · ছবি বা ভিডিও বিজ্ঞাপন`
+        : mode === "vip"
+          ? "ঐচ্ছিক — না কিনলেও অ্যাপের সব কিছু ব্যবহার করা যাবে"
+          : `৳১ = ${bn(COINS_PER_TAKA)} কয়েন`;
 
   return (
-    <SheetShell
-      title={isBoost ? "🚀 Reach Booster" : "🪙 কয়েন ডিপোজিট"}
-      subtitle={isBoost ? "ভিডিও প্রমোশন ও স্পনসরশিপ প্যাকেজ" : `৳১ = ${bn(COINS_PER_TAKA)} কয়েন`}
-      onClose={onClose}
-    >
-      <form onSubmit={submit} className="space-y-3">
-        {isBoost && (
+    <SheetShell title={title} subtitle={subtitle} onClose={onClose}>
+      <form onSubmit={(e) => void submit(e)} className="space-y-3">
+        {mode === "vip" && (
+          <div className="rounded-2xl border border-coin/50 bg-coin/10 p-4">
+            <p className="font-display text-2xl font-extrabold text-coin">
+              ৳{bn(s.vipPrice)} <span className="text-sm text-foreground">/ {bn(s.vipDays)} দিন</span>
+            </p>
+            <p className="mt-2 whitespace-pre-line text-xs font-semibold leading-relaxed text-foreground">
+              {s.vipBenefits}
+            </p>
+            <p className="mt-2 text-[10px] font-semibold text-foreground/75">
+              মেয়াদ শেষ হলে নিজে থেকে টাকা কাটবে না — চাইলে আবার কিনবেন।
+            </p>
+            {isVip(store.profile) && store.profile?.vipUntil && (
+              <p className="mt-2 text-[11px] font-extrabold text-success">
+                আপনার VIP চালু আছে: {new Date(store.profile.vipUntil).toLocaleDateString("bn-BD")} পর্যন্ত
+              </p>
+            )}
+          </div>
+        )}
+
+        {mode === "boost" && (
           <div className="grid grid-cols-2 gap-2">
             {(Object.keys(BOOST_PACKS) as BoostPack[]).map((key) => {
               const p = BOOST_PACKS[key];
@@ -1714,32 +1853,42 @@ function DepositSheet({
             <span className="font-mono text-lg font-extrabold text-coin">{number}</span>
             <button
               type="button"
-              onClick={copy}
+              onClick={() => void copy()}
               className="flex items-center gap-1 rounded-full bg-coin px-3 py-1 text-xs font-extrabold text-coin-foreground"
             >
               <Copy className="size-3.5" /> কপি
             </button>
           </div>
           <p className="mt-2 whitespace-pre-line text-[11px] font-medium leading-relaxed text-foreground/85">
-            {pay.depositNotice}
+            {s.depositNotice}
           </p>
         </div>
 
-        <input className={field} placeholder="আপনার নাম / @username" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} />
-        {!isBoost && (
+        {mode === "deposit" && (
           <input className={field} inputMode="numeric" placeholder={`কত টাকা পাঠিয়েছেন (সর্বনিম্ন ${bn(MIN_DEPOSIT)})`} value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} />
         )}
+        {mode === "ad" && (
+          <label className="block text-xs font-bold text-foreground">
+            কত দিন চলবে (১–৬০ দিন)
+            <input className={`${field} mt-1`} inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value.replace(/\D/g, ""))} />
+          </label>
+        )}
+        {mode !== "deposit" && (
+          <p className="rounded-xl bg-secondary px-3 py-2 text-xs font-extrabold text-foreground">
+            পাঠাতে হবে: <span className="text-coin">৳{bn(price)}</span>
+          </p>
+        )}
         <input className={`${field} font-mono uppercase`} placeholder="Transaction ID (TrxID)" value={trxId} onChange={(e) => setTrxId(e.target.value)} maxLength={20} />
-        {isBoost && (
+        {(mode === "boost" || mode === "ad") && (
           <>
-            <input className={field} placeholder="ভিডিও লিংক (https://...mp4)" value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} maxLength={300} />
-            <input className={field} placeholder="ক্যাপশন" value={caption} onChange={(e) => setCaption(e.target.value)} maxLength={160} />
-            <input className={field} placeholder="ফেসবুক পেজ / ইউটিউব লিংক (ঐচ্ছিক)" value={promoLink} onChange={(e) => setPromoLink(e.target.value)} maxLength={200} />
+            <input className={field} placeholder={mode === "ad" ? "বিজ্ঞাপনের ছবি বা ভিডিও লিংক (https://...)" : "ভিডিও লিংক (https://...mp4)"} value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} maxLength={300} />
+            <input className={field} placeholder={mode === "ad" ? "বিজ্ঞাপনের শিরোনাম" : "ক্যাপশন"} value={caption} onChange={(e) => setCaption(e.target.value)} maxLength={mode === "ad" ? 80 : 160} />
+            <input className={field} placeholder={mode === "ad" ? "আপনার পেজ / ওয়েবসাইট লিংক (ঐচ্ছিক)" : "ফেসবুক পেজ / ইউটিউব লিংক (ঐচ্ছিক)"} value={promoLink} onChange={(e) => setPromoLink(e.target.value)} maxLength={200} />
           </>
         )}
         {error && <p className="text-xs font-bold text-destructive">{error}</p>}
-        <button type="submit" className="bg-brand-gradient w-full rounded-xl py-3 text-sm font-extrabold text-brand-foreground">
-          রিকোয়েস্ট সাবমিট করুন
+        <button type="submit" disabled={busy} className="bg-brand-gradient w-full rounded-xl py-3 text-sm font-extrabold text-brand-foreground disabled:opacity-50">
+          {busy ? "পাঠানো হচ্ছে..." : "রিকোয়েস্ট সাবমিট করুন"}
         </button>
       </form>
 
@@ -1757,5 +1906,126 @@ function DepositSheet({
         </div>
       )}
     </SheetShell>
+  );
+}
+
+function RulesSheet({ rules, penalties, onClose }: { rules: string; penalties: Penalty[]; onClose: () => void }) {
+  return (
+    <SheetShell title="📜 নিয়মাবলী" subtitle="নিয়ম ভাঙলে জরিমানা বা আইডি ব্লক হতে পারে" onClose={onClose}>
+      <p className="whitespace-pre-line rounded-2xl bg-secondary p-4 text-xs font-semibold leading-relaxed text-foreground">
+        {rules}
+      </p>
+      {penalties.length > 0 && (
+        <div className="mt-4 space-y-2">
+          <p className="text-xs font-extrabold text-destructive">আপনার জরিমানা</p>
+          {penalties.map((p) => (
+            <div key={p.id} className="flex justify-between gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] font-semibold text-foreground">
+              <span>{p.reason}</span>
+              <span className="shrink-0 font-extrabold text-destructive">-৳{bn(p.amount)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </SheetShell>
+  );
+}
+
+function AuthScreen() {
+  const [mode, setMode] = useState<"in" | "up">("in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMsg(null);
+    if (!/^\S+@\S+\.\S+$/.test(email.trim()) || password.length < 6) {
+      setMsg("সঠিক ইমেইল আর কমপক্ষে ৬ অক্ষরের পাসওয়ার্ড দিন।");
+      return;
+    }
+    setBusy(true);
+    if (mode === "up") {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { emailRedirectTo: window.location.origin + window.location.search },
+      });
+      setBusy(false);
+      if (error) setMsg(error.message);
+      else if (!data.session) setMsg("আপনার ইমেইলে একটি লিংক পাঠানো হয়েছে। লিংকে ক্লিক করে অ্যাকাউন্ট চালু করুন।");
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      setBusy(false);
+      if (error) setMsg("ইমেইল বা পাসওয়ার্ড ভুল।");
+    }
+  };
+
+  const google = async () => {
+    const result = await lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin });
+    if (result.error) setMsg("Google দিয়ে লগইন করা যায়নি।");
+  };
+
+  const field =
+    "w-full rounded-xl border border-input bg-secondary px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring";
+
+  return (
+    <main className="grid min-h-dvh place-items-center bg-background px-5 py-10 text-foreground">
+      <div className="w-full max-w-sm space-y-4 rounded-3xl border border-border bg-card p-6 shadow-2xl">
+        <div className="text-center">
+          <p className="font-display text-2xl font-extrabold text-coin">🪙 WatchCoin</p>
+          <p className="mt-1 text-xs font-semibold text-foreground/80">
+            ভিডিও দেখুন, পয়েন্ট জমান, বিকাশ/নগদে টাকা তুলুন
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void google()}
+          className="w-full rounded-xl border border-border bg-secondary py-2.5 text-sm font-extrabold text-foreground"
+        >
+          Google দিয়ে চালিয়ে যান
+        </button>
+        <p className="text-center text-[11px] font-semibold text-muted-foreground">অথবা ইমেইল দিয়ে</p>
+        <form onSubmit={(e) => void submit(e)} className="space-y-3">
+          <input className={field} type="email" autoComplete="email" placeholder="ইমেইল" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input className={field} type="password" autoComplete={mode === "in" ? "current-password" : "new-password"} placeholder="পাসওয়ার্ড" value={password} onChange={(e) => setPassword(e.target.value)} />
+          {msg && <p className="text-xs font-bold text-warning">{msg}</p>}
+          <button type="submit" disabled={busy} className="bg-brand-gradient w-full rounded-xl py-3 text-sm font-extrabold text-brand-foreground disabled:opacity-50">
+            {mode === "in" ? "লগইন করুন" : "অ্যাকাউন্ট খুলুন"}
+          </button>
+        </form>
+        <button
+          type="button"
+          onClick={() => {
+            setMode(mode === "in" ? "up" : "in");
+            setMsg(null);
+          }}
+          className="w-full text-center text-xs font-bold text-accent"
+        >
+          {mode === "in" ? "নতুন? অ্যাকাউন্ট খুলুন (১০০ কয়েন ফ্রি)" : "আগে থেকে অ্যাকাউন্ট আছে? লগইন করুন"}
+        </button>
+      </div>
+    </main>
+  );
+}
+
+function BlockedScreen({ reason, rules }: { reason: string; rules: string }) {
+  return (
+    <main className="grid min-h-dvh place-items-center bg-background px-5 py-10 text-foreground">
+      <div className="w-full max-w-sm space-y-3 rounded-3xl border border-destructive/40 bg-card p-6">
+        <p className="text-lg font-extrabold text-destructive">⛔ আপনার আইডি ব্লক করা হয়েছে</p>
+        {reason && <p className="text-sm font-semibold text-foreground">কারণ: {reason}</p>}
+        <p className="whitespace-pre-line rounded-xl bg-secondary p-3 text-[11px] font-semibold leading-relaxed text-foreground/85">
+          {rules}
+        </p>
+        <button
+          type="button"
+          onClick={() => void supabase.auth.signOut()}
+          className="w-full rounded-xl border border-border bg-secondary py-2.5 text-sm font-bold text-foreground"
+        >
+          লগআউট
+        </button>
+      </div>
+    </main>
   );
 }

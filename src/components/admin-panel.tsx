@@ -1,14 +1,18 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
+  Ban,
   BadgeDollarSign,
   CheckCircle2,
+  Crown,
   DollarSign,
+  Gavel,
   LogOut,
   Megaphone,
   MessageCircle,
+  RefreshCw,
+  ScrollText,
   Settings,
-  ShieldCheck,
   Trash2,
   Upload,
   Users,
@@ -17,117 +21,110 @@ import {
 } from "lucide-react";
 
 import {
-  MAX_AD_FREQUENCY,
-  MIN_AD_FREQUENCY,
-  deleteComment,
-  saveAdFrequency,
-  saveAdUnitId,
-  saveWatchRule,
-  saveNotice,
-  setRequestStatus,
-  setUploadStatus,
-  setUploadsEnabled,
-  useAppSettings,
-  usePaySettings,
-  savePayConfig,
-  setDepositStatus,
-  COINS_PER_TAKA,
   BOOST_PACKS,
+  COINS_PER_TAKA,
+  POINTS_PER_TAKA,
+  mapSettings,
+  refresh,
+  type AppSettings,
   type DepositMethod,
-  type WithdrawRequest,
 } from "@/lib/app-store";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  adminBlockUser,
+  adminDeleteComment,
+  adminFineUser,
+  adminLoad,
+  adminSaveSettings,
+  adminSetDeposit,
+  adminSetUpload,
+  adminSetWithdraw,
+} from "@/lib/admin.functions";
 import { bn, taka } from "@/lib/format";
 
+type AdminData = Awaited<ReturnType<typeof adminLoad>>;
+type Status = "pending" | "approved" | "rejected";
+
+const field =
+  "mt-1 w-full rounded-xl border border-input bg-secondary px-3 py-2 text-sm text-foreground outline-none focus:border-ring";
+const saveBtn = "bg-brand-gradient rounded-xl px-4 py-2 text-xs font-extrabold text-brand-foreground disabled:opacity-40";
+
+const KIND_LABEL: Record<string, string> = {
+  coins: "🪙 কয়েন",
+  boost: "🚀 বুস্ট",
+  ad: "📢 বিজ্ঞাপন",
+  vip: "👑 VIP",
+};
+
 export function AdminPanel({
+  password,
   onExit,
   onLogout,
 }: {
+  password: string;
   onExit: () => void;
   onLogout: () => void;
 }) {
-  const settings = useAppSettings();
-  const pay = usePaySettings();
-  const [numDraft, setNumDraft] = useState(pay.numbers);
-  const [depNoticeDraft, setDepNoticeDraft] = useState(pay.depositNotice);
-  useEffect(() => {
-    setNumDraft(pay.numbers);
-    setDepNoticeDraft(pay.depositNotice);
-  }, [pay.numbers, pay.depositNotice]);
+  const [data, setData] = useState<AdminData | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [draft, setDraft] = useState<AppSettings | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [freqDraft, setFreqDraft] = useState(String(settings.adFrequency));
-  const [noticeDraft, setNoticeDraft] = useState(settings.notice);
-  const [adUnitDraft, setAdUnitDraft] = useState("");
-  const [secDraft, setSecDraft] = useState(String(settings.watchSeconds));
-  const [rewardDraft, setRewardDraft] = useState(String(settings.watchReward));
-
-  useEffect(() => {
-    setSecDraft(String(settings.watchSeconds));
-    setRewardDraft(String(settings.watchReward));
-  }, [settings.watchSeconds, settings.watchReward]);
-
-  const applyWatchRule = (event: FormEvent) => {
-    event.preventDefault();
-    if (saveWatchRule(Number(secDraft), Number(rewardDraft))) {
-      notify("Saved: " + secDraft + "s = " + rewardDraft + " coins");
-    } else {
-      notify("Invalid: seconds 1-600, coins 1-1000");
-    }
-  };
-
-  useEffect(() => {
-    setFreqDraft(String(settings.adFrequency));
-  }, [settings.adFrequency]);
-
-  useEffect(() => {
-    setNoticeDraft(settings.notice);
-  }, [settings.notice]);
+  const [search, setSearch] = useState("");
 
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(null), 2800);
   };
 
-  const applyFrequency = () => {
-    if (saveAdFrequency(Number(freqDraft))) {
-      notify("এড ফ্রিকোয়েন্সি সেভ করা হয়েছে।");
-    } else {
-      notify(`সঠিক নম্বর দিন (${bn(MIN_AD_FREQUENCY)}–${bn(MAX_AD_FREQUENCY)}).`);
+  const load = useCallback(async () => {
+    try {
+      const [d, s] = await Promise.all([
+        adminLoad({ data: { password } }),
+        supabase.from("app_settings").select("*").eq("id", 1).maybeSingle(),
+      ]);
+      setData(d);
+      const mapped = mapSettings((s.data as Record<string, unknown> | null) ?? null);
+      setSettings(mapped);
+      setDraft(mapped);
+    } catch {
+      onLogout();
     }
-  };
+  }, [password, onLogout]);
 
-  const applyNotice = () => {
-    saveNotice(noticeDraft);
-    notify("ইউজার পেমেন্ট বার্তা আপডেট করা হয়েছে।");
-  };
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const applyAdUnit = (event: FormEvent) => {
-    event.preventDefault();
-    if (saveAdUnitId(adUnitDraft)) {
-      setAdUnitDraft("");
-      notify("অ্যাড আইডি সফলভাবে আপডেট করা হয়েছে!");
-    } else {
-      notify("সঠিক AdMob আইডি দিন (যেমন ca-app-pub-1234567890123456/1234567890)।");
+  const run = async (fn: () => Promise<unknown>, message: string) => {
+    try {
+      await fn();
+      notify(message);
+    } catch {
+      notify("সমস্যা হয়েছে, আবার চেষ্টা করুন।");
     }
+    await load();
+    void refresh();
   };
 
-  const approve = (request: WithdrawRequest) => {
-    setRequestStatus(request.id, "approved");
-    notify(
-      `${taka(request.amount)} পেমেন্ট সফলভাবে এপ্রুভ করা হয়েছে (${request.method})।`,
+  const save = (patch: Record<string, unknown>, message = "সেভ করা হয়েছে।") =>
+    run(() => adminSaveSettings({ data: { password, patch } }), message);
+
+  if (!data || !settings || !draft) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background text-sm font-bold text-foreground">
+        লোড হচ্ছে...
+      </main>
     );
-  };
+  }
 
-  const reject = (request: WithdrawRequest) => {
-    setRequestStatus(request.id, "rejected");
-    notify("উইথড্র রিকোয়েস্টটি রিজেক্ট করা হয়েছে।");
-  };
-
-  const pending = settings.requests.filter((r) => r.status === "pending");
-  const approved = settings.requests.filter((r) => r.status === "approved");
-  const pendingTotal = pending.reduce((sum, r) => sum + r.amount, 0);
-  const paidTotal = approved.reduce((sum, r) => sum + r.amount, 0);
-  const adsPerThousand = Math.floor(1000 / settings.adFrequency);
-  const pendingUploads = settings.uploads.filter((u) => u.status === "pending");
+  const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => setDraft({ ...draft, [key]: value });
+  const pendingDeposits = data.deposits.filter((d) => d.status === "pending");
+  const pendingWithdraws = data.withdrawals.filter((w) => w.status === "pending");
+  const pendingUploads = data.uploads.filter((u) => u.status === "pending");
+  const approvedIncome = data.deposits.filter((d) => d.status === "approved").reduce((s, d) => s + d.amount, 0);
+  const users = data.profiles.filter(
+    (p) => !search.trim() || p.username.toLowerCase().includes(search.trim().toLowerCase()) || p.referral_code.includes(search.trim().toUpperCase()),
+  );
 
   return (
     <div className="min-h-screen bg-background px-4 py-6 font-sans text-foreground sm:px-6">
@@ -138,235 +135,219 @@ export function AdminPanel({
               <Settings className="size-4.5 text-brand-foreground" />
             </span>
             <div className="min-w-0">
-              <h1 className="truncate text-base font-extrabold sm:text-lg">
-                অ্যাপ এডমিন প্যানেল
-              </h1>
-              <p className="text-[11px] font-semibold text-muted-foreground">
-                WatchCoin কন্ট্রোল সেন্টার
-              </p>
+              <h1 className="truncate text-base font-extrabold sm:text-lg">অ্যাপ এডমিন প্যানেল</h1>
+              <p className="text-[11px] font-semibold text-muted-foreground">সব ইউজারের তথ্য — অনলাইন ডাটাবেস</p>
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            <span className="flex items-center gap-1.5 rounded-full border border-success/30 bg-success/15 px-3 py-1 text-[10px] font-bold text-success">
-              <ShieldCheck className="size-3" />
-              সিস্টেম এক্টিভ
-            </span>
-            <button
-              type="button"
-              onClick={onExit}
-              className="flex items-center gap-1.5 rounded-full border border-border bg-secondary px-3 py-1 text-[10px] font-bold text-secondary-foreground transition-colors hover:bg-muted"
-            >
-              <ArrowLeft className="size-3" />
-              অ্যাপে ফিরে যান
+            <button type="button" onClick={() => void load()} className="flex items-center gap-1.5 rounded-full border border-border bg-secondary px-3 py-1 text-[10px] font-bold text-secondary-foreground">
+              <RefreshCw className="size-3" /> রিফ্রেশ
             </button>
-            <button
-              type="button"
-              onClick={onLogout}
-              className="flex items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1 text-[10px] font-bold text-destructive transition-colors hover:bg-destructive/20"
-            >
-              <LogOut className="size-3" />
-              লগআউট
+            <button type="button" onClick={onExit} className="flex items-center gap-1.5 rounded-full border border-border bg-secondary px-3 py-1 text-[10px] font-bold text-secondary-foreground">
+              <ArrowLeft className="size-3" /> অ্যাপে ফিরে যান
+            </button>
+            <button type="button" onClick={onLogout} className="flex items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1 text-[10px] font-bold text-destructive">
+              <LogOut className="size-3" /> লগআউট
             </button>
           </div>
         </header>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-          <StatCard
-            icon={<Users className="size-4" />}
-            label="পেন্ডিং রিকোয়েস্ট"
-            value={bn(pending.length) + " টি"}
-            hint={`মোট ${taka(pendingTotal)}`}
-            tone="warning"
-          />
-          <StatCard
-            icon={<CheckCircle2 className="size-4" />}
-            label="পরিশোধ করা হয়েছে"
-            value={taka(paidTotal)}
-            hint={`${bn(approved.length)} টি অনুমোদিত`}
-            tone="success"
-          />
-          <StatCard
-            icon={<Video className="size-4" />}
-            label="পেন্ডিং ভিডিও"
-            value={bn(pendingUploads.length) + " টি"}
-            hint={`মোট ${bn(settings.uploads.length)} টি আপলোড`}
-            tone="accent"
-          />
-          <StatCard
-            icon={<MessageCircle className="size-4" />}
-            label="কমেন্ট"
-            value={bn(settings.comments.length) + " টি"}
-            hint={`রেফারেল ${bn(settings.referrals)} জন`}
-            tone="primary"
-          />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatCard icon={<Users className="size-4" />} label="মোট ইউজার" value={bn(data.profiles.length)} hint={`${bn(data.profiles.filter((p) => p.blocked).length)} জন ব্লক`} tone="primary" />
+          <StatCard icon={<BadgeDollarSign className="size-4" />} label="পেন্ডিং পেমেন্ট" value={bn(pendingDeposits.length) + " টি"} hint={`মোট আয় ${taka(approvedIncome)}`} tone="coin" />
+          <StatCard icon={<DollarSign className="size-4" />} label="পেন্ডিং উইথড্র" value={bn(pendingWithdraws.length) + " টি"} hint={taka(pendingWithdraws.reduce((s, w) => s + w.amount, 0))} tone="warning" />
+          <StatCard icon={<Video className="size-4" />} label="পেন্ডিং ভিডিও" value={bn(pendingUploads.length) + " টি"} hint={`${bn(data.comments.length)} কমেন্ট`} tone="accent" />
         </div>
 
+        {/* Payments: coins, boost, ads, VIP */}
+        <Panel icon={<BadgeDollarSign className="size-4" />} title="সব পেমেন্ট রিকোয়েস্ট (কয়েন / বুস্ট / বিজ্ঞাপন / VIP)" tone="coin">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left text-xs">
+              <thead className="text-muted-foreground">
+                <tr>
+                  <th className="py-2">ইউজার</th>
+                  <th>ধরন</th>
+                  <th>টাকা</th>
+                  <th>মেথড</th>
+                  <th>TrxID</th>
+                  <th>বিস্তারিত</th>
+                  <th>স্ট্যাটাস</th>
+                  <th className="text-right">অ্যাকশন</th>
+                </tr>
+              </thead>
+              <tbody className="text-foreground">
+                {data.deposits.length === 0 && (
+                  <tr><td colSpan={8} className="py-4 text-center text-muted-foreground">কোনো রিকোয়েস্ট নেই।</td></tr>
+                )}
+                {data.deposits.map((d) => {
+                  const det = (d.details ?? {}) as Record<string, unknown>;
+                  const media = String(det["mediaUrl"] ?? det["videoUrl"] ?? "");
+                  return (
+                    <tr key={d.id} className="border-t border-border align-top">
+                      <td className="py-2 font-bold">{d.username}</td>
+                      <td>{KIND_LABEL[d.kind] ?? d.kind}</td>
+                      <td className="font-bold text-coin">{taka(d.amount)}</td>
+                      <td>{d.method}</td>
+                      <td className="font-mono">{d.trx_id}</td>
+                      <td className="max-w-[200px] py-2 text-[10px] text-muted-foreground">
+                        {d.kind === "coins" && `${bn(d.amount * COINS_PER_TAKA)} কয়েন`}
+                        {d.kind === "boost" && BOOST_PACKS[det["pack"] === "gold" ? "gold" : "silver"].label}
+                        {d.kind === "ad" && `${String(det["title"] ?? "")} · ${bn(Number(det["days"] ?? 1))} দিন`}
+                        {d.kind === "vip" && `${bn(Number(det["days"] ?? settings.vipDays))} দিন`}
+                        {media && (
+                          <a href={media} target="_blank" rel="noopener noreferrer" className="block truncate text-accent underline">{media}</a>
+                        )}
+                      </td>
+                      <td><StatusPill status={d.status as Status} /></td>
+                      <td>
+                        <div className="flex justify-end gap-1.5">
+                          {d.status === "pending" ? (
+                            <>
+                              <button onClick={() => void run(() => adminSetDeposit({ data: { password, id: d.id, status: "approved" } }), "Accept করা হয়েছে।")} className="flex items-center gap-1 rounded-lg bg-success px-2.5 py-1 text-[10px] font-bold text-success-foreground">
+                                <CheckCircle2 className="size-3" /> Accept
+                              </button>
+                              <button onClick={() => void run(() => adminSetDeposit({ data: { password, id: d.id, status: "rejected" } }), "Reject করা হয়েছে।")} className="flex items-center gap-1 rounded-lg bg-destructive px-2.5 py-1 text-[10px] font-bold text-destructive-foreground">
+                                <XCircle className="size-3" /> Reject
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-[10px] font-semibold text-muted-foreground">{d.status === "approved" ? "চালু/যোগ হয়েছে" : "বাতিল"}</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        {/* Users: block + fine */}
+        <Panel icon={<Users className="size-4" />} title="ইউজার ম্যানেজমেন্ট (ব্লক ও জরিমানা)" tone="primary">
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="নাম বা রেফার কোড দিয়ে খুঁজুন" className={field} />
+          <ul className="space-y-2">
+            {users.length === 0 && <li className="py-4 text-center text-xs text-muted-foreground">কোনো ইউজার নেই।</li>}
+            {users.map((p) => (
+              <UserRow
+                key={p.id}
+                user={p}
+                onBlock={(blocked, reason) => void run(() => adminBlockUser({ data: { password, userId: p.id, blocked, reason } }), blocked ? "আইডি ব্লক করা হয়েছে।" : "আইডি আনব্লক করা হয়েছে।")}
+                onFine={(amount, reason) => void run(() => adminFineUser({ data: { password, userId: p.id, amount, reason } }), `৳${bn(amount)} জরিমানা করা হয়েছে।`)}
+                penalties={data.penalties.filter((x) => x.user_id === p.id)}
+              />
+            ))}
+          </ul>
+        </Panel>
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Panel
-            icon={<Video className="size-4" />}
-            title="Watch Time Reward"
-            tone="coin"
-          >
-            <form onSubmit={applyWatchRule} className="space-y-2">
-              <label className="block text-xs font-semibold text-foreground">
-                Required Watch Time (Seconds)
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={600}
-                  value={secDraft}
-                  onChange={(event) => setSecDraft(event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-input bg-secondary px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-                />
-              </label>
-              <label className="block text-xs font-semibold text-foreground">
-                Reward Points/Coins
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={1000}
-                  value={rewardDraft}
-                  onChange={(event) => setRewardDraft(event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-input bg-secondary px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-                />
-              </label>
-              <button
-                type="submit"
-                className="bg-brand-gradient w-full rounded-xl px-4 py-2 text-sm font-bold text-brand-foreground"
-              >
-                Save
-              </button>
-            </form>
-            <p className="text-[11px] font-medium text-muted-foreground">
-              Active: <span className="font-bold text-foreground">{settings.watchSeconds}s</span> ={" "}
-              <span className="font-bold text-coin">{settings.watchReward} coins</span>
-            </p>
-          </Panel>
-          <Panel
-            icon={<BadgeDollarSign className="size-4" />}
-            title="অ্যাডমিন প্যানেল: AdMob আইডি সেটআপ"
-            tone="coin"
-          >
-            <form onSubmit={applyAdUnit} className="space-y-2">
-              <input
-                type="text"
-                placeholder="AdMob Ad Unit ID লিখুন"
-                value={adUnitDraft}
-                maxLength={60}
-                onChange={(event) => setAdUnitDraft(event.target.value)}
-                className="w-full rounded-xl border border-input bg-secondary px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring"
-              />
-              <button
-                type="submit"
-                className="bg-brand-gradient w-full rounded-xl px-4 py-2 text-sm font-bold text-brand-foreground"
-              >
-                সেভ করুন
-              </button>
-            </form>
-            <p className="break-all text-[11px] font-medium text-muted-foreground">
-              বর্তমান অ্যাক্টিভ অ্যাড আইডি:{" "}
-              <span className="font-mono text-foreground">{settings.adUnitId}</span>
-            </p>
-          </Panel>
-          <Panel
-            icon={<Megaphone className="size-4" />}
-            title="অ্যাডভার্টাইজমেন্ট কন্ট্রোল"
-            tone="coin"
-          >
-            <label className="block text-xs font-semibold text-foreground">
-              কতটি ভিডিও পরপর এড দেখাবে?
-              <input
-                type="number"
-                inputMode="numeric"
-                min={MIN_AD_FREQUENCY}
-                max={MAX_AD_FREQUENCY}
-                value={freqDraft}
-                onChange={(event) => setFreqDraft(event.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-input bg-secondary px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-              />
+          <Panel icon={<Video className="size-4" />} title="Watch Time Reward" tone="coin">
+            <label className="block text-xs font-semibold">
+              Required Watch Time (Seconds)
+              <input type="number" min={1} max={600} value={draft.watchSeconds} onChange={(e) => set("watchSeconds", Number(e.target.value))} className={field} />
             </label>
+            <label className="block text-xs font-semibold">
+              Reward Points/Coins
+              <input type="number" min={1} max={1000} value={draft.watchReward} onChange={(e) => set("watchReward", Number(e.target.value))} className={field} />
+            </label>
+            <button
+              className={saveBtn}
+              onClick={() => {
+                if (draft.watchSeconds < 1 || draft.watchSeconds > 600 || draft.watchReward < 1 || draft.watchReward > 1000) {
+                  notify("Invalid: seconds 1-600, coins 1-1000");
+                  return;
+                }
+                void save({ watch_seconds: Math.round(draft.watchSeconds), watch_reward: Math.round(draft.watchReward) }, `Saved: ${draft.watchSeconds}s = ${draft.watchReward} পয়েন্ট`);
+              }}
+            >
+              Save
+            </button>
+            <p className="text-[11px] text-muted-foreground">
+              Active: <b className="text-foreground">{settings.watchSeconds}s</b> = <b className="text-coin">{settings.watchReward} পয়েন্ট</b> (VIP পাবে দ্বিগুণ)
+            </p>
+          </Panel>
 
-            <div className="flex flex-wrap gap-2">
-              {[10, 20, 50].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => setFreqDraft(String(preset))}
-                  className={`rounded-full border px-3 py-1 text-[10px] font-bold transition-colors ${
-                    Number(freqDraft) === preset
-                      ? "border-transparent bg-brand-gradient text-brand-foreground"
-                      : "border-border bg-secondary text-secondary-foreground hover:bg-muted"
-                  }`}
-                >
-                  প্রতি {bn(preset)} টি
-                </button>
-              ))}
+          <Panel icon={<Crown className="size-4" />} title="VIP মেম্বারশিপ সেটিং" tone="coin">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block text-xs font-semibold">
+                দাম (৳)
+                <input type="number" min={1} value={draft.vipPrice} onChange={(e) => set("vipPrice", Number(e.target.value))} className={field} />
+              </label>
+              <label className="block text-xs font-semibold">
+                মেয়াদ (দিন)
+                <input type="number" min={1} value={draft.vipDays} onChange={(e) => set("vipDays", Number(e.target.value))} className={field} />
+              </label>
             </div>
-
-            <p className="text-[11px] font-medium leading-relaxed text-muted-foreground">
-              বর্তমান সেটিং: প্রতি{" "}
-              <strong className="text-foreground">
-                {bn(settings.adFrequency)}টি
-              </strong>{" "}
-              ভিডিওর পর ১টি বাধ্যতামূলক এড আসবে (১,০০০ ভিডিওতে{" "}
-              {bn(adsPerThousand)}টি এড)।
-            </p>
-
+            <label className="block text-xs font-semibold">
+              সুবিধার তালিকা (ইউজার কেনার আগে দেখবে)
+              <textarea rows={3} maxLength={1000} value={draft.vipBenefits} onChange={(e) => set("vipBenefits", e.target.value)} className={field} />
+            </label>
             <button
-              type="button"
-              onClick={applyFrequency}
-              disabled={freqDraft === String(settings.adFrequency)}
-              className="bg-brand-gradient rounded-xl px-4 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+              className={saveBtn}
+              onClick={() => {
+                if (draft.vipPrice < 1 || draft.vipDays < 1) {
+                  notify("সঠিক দাম ও মেয়াদ দিন।");
+                  return;
+                }
+                void save({ vip_price: Math.round(draft.vipPrice), vip_days: Math.round(draft.vipDays), vip_benefits: draft.vipBenefits.trim() });
+              }}
             >
               সেভ করুন
+            </button>
+            <p className="text-[11px] text-muted-foreground">VIP ইউজার: {bn(data.profiles.filter((p) => p.vip_until && Date.parse(p.vip_until) > Date.now()).length)} জন</p>
+          </Panel>
+
+          <Panel icon={<Megaphone className="size-4" />} title="বিজ্ঞাপন কন্ট্রোল" tone="accent">
+            <label className="block text-xs font-semibold">
+              কতটি ভিডিও পরপর বিজ্ঞাপন আসবে? (VIP-রা এর দ্বিগুণ পরে দেখবে)
+              <input type="number" min={1} max={100} value={draft.adFrequency} onChange={(e) => set("adFrequency", Number(e.target.value))} className={field} />
+            </label>
+            <label className="block text-xs font-semibold">
+              বিজ্ঞাপনদাতার দাম — প্রতিদিন (৳)
+              <input type="number" min={1} value={draft.adPricePerDay} onChange={(e) => set("adPricePerDay", Number(e.target.value))} className={field} />
+            </label>
+            <button
+              className={saveBtn}
+              onClick={() => {
+                if (draft.adFrequency < 1 || draft.adFrequency > 100 || draft.adPricePerDay < 1) {
+                  notify("সঠিক নম্বর দিন (১–১০০)।");
+                  return;
+                }
+                void save({ ad_frequency: Math.round(draft.adFrequency), ad_price_per_day: Math.round(draft.adPricePerDay) });
+              }}
+            >
+              সেভ করুন
+            </button>
+            <label className="block text-xs font-semibold">
+              AdMob আইডি
+              <input value={draft.adUnitId} maxLength={60} onChange={(e) => set("adUnitId", e.target.value)} className={`${field} font-mono`} />
+            </label>
+            <button
+              className={saveBtn}
+              onClick={() => {
+                if (!/^ca-app-pub-\d{10,20}[/~]\d{6,12}$/.test(draft.adUnitId.trim())) {
+                  notify("সঠিক AdMob আইডি দিন (যেমন ca-app-pub-1234567890123456/1234567890)।");
+                  return;
+                }
+                void save({ ad_unit_id: draft.adUnitId.trim() }, "অ্যাড আইডি আপডেট হয়েছে!");
+              }}
+            >
+              আইডি সেভ করুন
             </button>
           </Panel>
 
-          <Panel
-            icon={<Settings className="size-4" />}
-            title="ইউজার নোটিশ ও আপলোড কন্ট্রোল"
-            tone="primary"
-          >
-            <label className="block text-xs font-semibold text-foreground">
-              ইউজার অ্যাপের পেমেন্ট বার্তা:
-              <textarea
-                value={noticeDraft}
-                onChange={(event) => setNoticeDraft(event.target.value)}
-                rows={3}
-                maxLength={300}
-                className="mt-1.5 w-full resize-none rounded-xl border border-input bg-secondary px-3 py-2 text-sm leading-relaxed text-foreground outline-none focus:border-ring"
-              />
+          <Panel icon={<Settings className="size-4" />} title="ইউজার নোটিশ ও আপলোড" tone="primary">
+            <label className="block text-xs font-semibold">
+              উইথড্র পেজের বার্তা
+              <textarea rows={3} maxLength={300} value={draft.notice} onChange={(e) => set("notice", e.target.value)} className={field} />
             </label>
-            <button
-              type="button"
-              onClick={applyNotice}
-              disabled={noticeDraft.trim() === settings.notice}
-              className="bg-brand-gradient w-fit rounded-xl px-4 py-2 text-xs font-bold text-brand-foreground shadow-lg transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-            >
-              সেভ করুন
-            </button>
-
+            <button className={saveBtn} onClick={() => void save({ notice: draft.notice.trim() })}>সেভ করুন</button>
             <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary px-3 py-2.5">
-              <span className="text-xs font-semibold text-foreground">
-                ইউজার ভিডিও আপলোড চালু
-              </span>
+              <span className="text-xs font-semibold">ইউজার ভিডিও আপলোড চালু</span>
               <button
                 type="button"
-                onClick={() => {
-                  setUploadsEnabled(!settings.uploadsEnabled);
-                  notify(
-                    settings.uploadsEnabled
-                      ? "ইউজার আপলোড বন্ধ করা হয়েছে।"
-                      : "ইউজার আপলোড চালু করা হয়েছে।",
-                  );
-                }}
-                className={`rounded-full px-3 py-1 text-[10px] font-bold ${
-                  settings.uploadsEnabled
-                    ? "bg-success text-success-foreground"
-                    : "bg-muted text-foreground"
-                }`}
+                onClick={() => void save({ uploads_enabled: !settings.uploadsEnabled }, settings.uploadsEnabled ? "আপলোড বন্ধ করা হয়েছে।" : "আপলোড চালু করা হয়েছে।")}
+                className={`rounded-full px-3 py-1 text-[10px] font-bold ${settings.uploadsEnabled ? "bg-success text-success-foreground" : "bg-muted text-foreground"}`}
               >
                 {settings.uploadsEnabled ? "চালু" : "বন্ধ"}
               </button>
@@ -374,65 +355,96 @@ export function AdminPanel({
           </Panel>
         </div>
 
-        <Panel
-          icon={<Upload className="size-4" />}
-          title="ইউজার আপলোড করা ভিডিও (অনুমোদন দরকার)"
-          tone="accent"
-        >
-          {settings.uploads.length === 0 ? (
-            <p className="py-6 text-center text-xs font-semibold text-muted-foreground">
-              এখনো কোনো ভিডিও আপলোড হয়নি।
-            </p>
+        <Panel icon={<ScrollText className="size-4" />} title="নিয়মাবলী (ইউজার অ্যাপে দেখাবে)" tone="warning">
+          <textarea rows={8} maxLength={4000} value={draft.rules} onChange={(e) => set("rules", e.target.value)} className={field} />
+          <button className={saveBtn} onClick={() => void save({ rules: draft.rules.trim() }, "নিয়মাবলী সেভ হয়েছে।")}>সেভ করুন</button>
+        </Panel>
+
+        <Panel icon={<BadgeDollarSign className="size-4" />} title="সেন্ডমানি নাম্বার ও নির্দেশনা" tone="coin">
+          <div className="grid gap-3 sm:grid-cols-3">
+            {(["bKash", "Nagad", "Rocket"] as DepositMethod[]).map((m) => (
+              <label key={m} className="block text-xs font-bold">
+                {m} নাম্বার
+                <input value={draft.numbers[m]} maxLength={20} onChange={(e) => set("numbers", { ...draft.numbers, [m]: e.target.value })} className={`${field} font-mono`} />
+              </label>
+            ))}
+          </div>
+          <label className="block text-xs font-bold">
+            ইউজারদের জন্য নির্দেশনা
+            <textarea rows={3} maxLength={500} value={draft.depositNotice} onChange={(e) => set("depositNotice", e.target.value)} className={field} />
+          </label>
+          <button
+            className={saveBtn}
+            onClick={() =>
+              void save(
+                {
+                  pay_numbers: {
+                    bKash: draft.numbers.bKash.trim(),
+                    Nagad: draft.numbers.Nagad.trim(),
+                    Rocket: draft.numbers.Rocket.trim(),
+                  },
+                  deposit_notice: draft.depositNotice.trim(),
+                },
+                "সেন্ডমানি নাম্বার ও নিয়ম সেভ হয়েছে।",
+              )
+            }
+          >
+            সেভ করুন
+          </button>
+        </Panel>
+
+        <Panel icon={<DollarSign className="size-4" />} title={`উইথড্র রিকোয়েস্ট (${bn(POINTS_PER_TAKA)} পয়েন্ট = ৳১)`} tone="success">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[600px] text-left text-xs">
+              <thead className="text-muted-foreground">
+                <tr><th className="py-2">ইউজার</th><th>মেথড</th><th>নম্বর</th><th>টাকা</th><th>স্ট্যাটাস</th><th className="text-right">অ্যাকশন</th></tr>
+              </thead>
+              <tbody>
+                {data.withdrawals.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-muted-foreground">কোনো উইথড্র রিকোয়েস্ট নেই।</td></tr>}
+                {data.withdrawals.map((w) => (
+                  <tr key={w.id} className="border-t border-border">
+                    <td className="py-2 font-bold">{w.username}</td>
+                    <td>{w.method}</td>
+                    <td className="font-mono text-coin">{w.phone}</td>
+                    <td className="font-bold text-success">{taka(w.amount)}</td>
+                    <td><StatusPill status={w.status as Status} /></td>
+                    <td>
+                      <div className="flex justify-end gap-1.5">
+                        {w.status === "pending" ? (
+                          <>
+                            <button onClick={() => void run(() => adminSetWithdraw({ data: { password, id: w.id, status: "approved" } }), "পেমেন্ট সম্পন্ন হিসেবে চিহ্নিত।")} className="rounded-lg bg-success px-2.5 py-1 text-[10px] font-bold text-success-foreground">পেমেন্ট সম্পন্ন</button>
+                            <button onClick={() => void run(() => adminSetWithdraw({ data: { password, id: w.id, status: "rejected" } }), "রিজেক্ট — টাকা ইউজারের ব্যালেন্সে ফেরত গেছে।")} className="rounded-lg border border-destructive/40 bg-destructive/10 px-2.5 py-1 text-[10px] font-bold text-destructive">রিজেক্ট</button>
+                          </>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">{w.status === "approved" ? "পরিশোধ করা হয়েছে" : "রিজেক্ট (ফেরত)"}</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        <Panel icon={<Upload className="size-4" />} title="ইউজার আপলোড করা ভিডিও" tone="accent">
+          {data.uploads.length === 0 ? (
+            <p className="py-6 text-center text-xs text-muted-foreground">এখনো কোনো ভিডিও আপলোড হয়নি।</p>
           ) : (
             <ul className="space-y-2">
-              {settings.uploads.map((upload) => (
-                <li
-                  key={upload.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-secondary px-3 py-2.5"
-                >
+              {data.uploads.map((u) => (
+                <li key={u.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-secondary px-3 py-2.5">
                   <div className="min-w-0">
-                    <p className="truncate text-xs font-bold text-foreground">
-                      {upload.user} · {upload.caption || "ক্যাপশন নেই"}
-                    </p>
-                    <p className="truncate text-[10px] font-medium text-muted-foreground">
-                      {upload.url}
-                    </p>
+                    <p className="truncate text-xs font-bold">{u.username} · {u.caption || "ক্যাপশন নেই"}</p>
+                    <a href={u.url} target="_blank" rel="noopener noreferrer" className="block truncate text-[10px] text-accent underline">{u.url}</a>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span
-                      className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${
-                        upload.status === "approved"
-                          ? "border-success/30 bg-success/15 text-success"
-                          : upload.status === "rejected"
-                            ? "border-destructive/30 bg-destructive/15 text-destructive"
-                            : "border-warning/30 bg-warning/15 text-warning"
-                      }`}
-                    >
-                      {upload.status}
-                    </span>
-                    {upload.status !== "approved" && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setUploadStatus(upload.id, "approved");
-                          notify("ভিডিওটি অনুমোদন করা হয়েছে, এখন ফিডে দেখাবে।");
-                        }}
-                        className="rounded-lg bg-success px-2.5 py-1 text-[10px] font-bold text-success-foreground"
-                      >
-                        অনুমোদন
-                      </button>
+                    <StatusPill status={u.status as Status} />
+                    {u.status !== "approved" && (
+                      <button onClick={() => void run(() => adminSetUpload({ data: { password, id: u.id, status: "approved" } }), "ভিডিও অনুমোদন করা হয়েছে।")} className="rounded-lg bg-success px-2.5 py-1 text-[10px] font-bold text-success-foreground">অনুমোদন</button>
                     )}
-                    {upload.status !== "rejected" && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setUploadStatus(upload.id, "rejected");
-                          notify("ভিডিওটি রিজেক্ট করা হয়েছে।");
-                        }}
-                        className="rounded-lg border border-destructive/40 bg-destructive/10 px-2.5 py-1 text-[10px] font-bold text-destructive"
-                      >
-                        রিজেক্ট
-                      </button>
+                    {u.status !== "rejected" && (
+                      <button onClick={() => void run(() => adminSetUpload({ data: { password, id: u.id, status: "rejected" } }), "ভিডিও রিজেক্ট করা হয়েছে।")} className="rounded-lg border border-destructive/40 bg-destructive/10 px-2.5 py-1 text-[10px] font-bold text-destructive">রিজেক্ট</button>
                     )}
                   </div>
                 </li>
@@ -441,245 +453,106 @@ export function AdminPanel({
           )}
         </Panel>
 
-        <Panel
-          icon={<MessageCircle className="size-4" />}
-          title="কমেন্ট মডারেশন"
-          tone="primary"
-        >
-          {settings.comments.length === 0 ? (
-            <p className="py-6 text-center text-xs font-semibold text-muted-foreground">
-              এখনো কোনো কমেন্ট নেই।
-            </p>
+        <Panel icon={<MessageCircle className="size-4" />} title="কমেন্ট মডারেশন" tone="primary">
+          {data.comments.length === 0 ? (
+            <p className="py-6 text-center text-xs text-muted-foreground">এখনো কোনো কমেন্ট নেই।</p>
           ) : (
             <ul className="space-y-2">
-              {settings.comments
-                .slice()
-                .reverse()
-                .map((comment) => (
-                  <li
-                    key={comment.id}
-                    className="flex items-start justify-between gap-3 rounded-xl border border-border bg-secondary px-3 py-2"
-                  >
-                    <p className="min-w-0 text-xs text-foreground">
-                      <span className="font-bold text-accent">
-                        {comment.user}
-                      </span>{" "}
-                      {comment.text}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        deleteComment(comment.id);
-                        notify("কমেন্ট মুছে ফেলা হয়েছে।");
-                      }}
-                      aria-label="Delete comment"
-                      className="shrink-0 rounded-lg border border-destructive/40 bg-destructive/10 p-1.5 text-destructive"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </li>
-                ))}
+              {data.comments.map((c) => (
+                <li key={c.id} className="flex items-start justify-between gap-3 rounded-xl border border-border bg-secondary px-3 py-2">
+                  <p className="min-w-0 text-xs"><span className="font-bold text-accent">{c.username}</span> {c.text}</p>
+                  <button onClick={() => void run(() => adminDeleteComment({ data: { password, id: c.id } }), "কমেন্ট মুছে ফেলা হয়েছে।")} aria-label="Delete comment" className="shrink-0 rounded-lg border border-destructive/40 bg-destructive/10 p-1.5 text-destructive">
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </li>
+              ))}
             </ul>
           )}
-        </Panel>
-
-        <Panel
-          icon={<DollarSign className="size-4" />}
-          title="পেন্ডিং বিকাশ/নগদ উইথড্র রিকোয়েস্ট (৫০+ টাকা)"
-          tone="success"
-        >
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-left text-xs">
-              <thead className="text-muted-foreground">
-                <tr className="border-b border-border">
-                  <th className="px-3 py-2 font-semibold">ইউজার</th>
-                  <th className="px-3 py-2 font-semibold">মেথড</th>
-                  <th className="px-3 py-2 font-semibold">নম্বর</th>
-                  <th className="px-3 py-2 font-semibold">পরিমাণ</th>
-                  <th className="px-3 py-2 font-semibold">স্ট্যাটাস</th>
-                  <th className="px-3 py-2 text-right font-semibold">অ্যাকশন</th>
-                </tr>
-              </thead>
-              <tbody>
-                {settings.requests.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="px-3 py-8 text-center font-semibold text-muted-foreground"
-                    >
-                      কোনো উইথড্র রিকোয়েস্ট নেই।
-                    </td>
-                  </tr>
-                )}
-                {settings.requests.map((request) => (
-                  <tr
-                    key={request.id}
-                    className="border-b border-border/60 last:border-0"
-                  >
-                    <td className="px-3 py-3 font-semibold text-foreground">
-                      {request.user}
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className="rounded-md border border-border bg-secondary px-2 py-0.5 text-[10px] font-bold text-foreground">
-                        {request.method}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 font-mono text-coin">
-                      {request.phone}
-                    </td>
-                    <td className="px-3 py-3 font-bold text-success">
-                      {taka(request.amount)}
-                    </td>
-                    <td className="px-3 py-3">
-                      <StatusPill status={request.status} />
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex justify-end gap-2">
-                        {request.status === "pending" ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => approve(request)}
-                              className="flex items-center gap-1 rounded-lg bg-success px-3 py-1 text-[10px] font-bold text-success-foreground transition-transform active:scale-95 hover:brightness-110"
-                            >
-                              <CheckCircle2 className="size-3" />
-                              পেমেন্ট সম্পন্ন করুন
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => reject(request)}
-                              className="flex items-center gap-1 rounded-lg border border-destructive/40 bg-destructive/10 px-2.5 py-1 text-[10px] font-bold text-destructive transition-transform active:scale-95 hover:bg-destructive/20"
-                            >
-                              <XCircle className="size-3" />
-                              রিজেক্ট
-                            </button>
-                          </>
-                        ) : (
-                          <span className="text-[10px] font-semibold text-muted-foreground">
-                            {request.status === "approved"
-                              ? "পরিশোধ করা হয়েছে"
-                              : "রিজেক্ট করা হয়েছে"}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-
-        <Panel icon={<BadgeDollarSign className="size-4" />} title="ডিপোজিট সেন্ডমানি নাম্বার ও নিয়ম" tone="coin">
-          <form
-            className="space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              savePayConfig(numDraft, depNoticeDraft);
-              notify("সেন্ডমানি নাম্বার ও নিয়ম সেভ হয়েছে।");
-            }}
-          >
-            <div className="grid gap-3 sm:grid-cols-3">
-              {(["bKash", "Nagad", "Rocket"] as DepositMethod[]).map((m) => (
-                <label key={m} className="block text-xs font-bold text-foreground">
-                  {m} নাম্বার
-                  <input
-                    value={numDraft[m]}
-                    onChange={(e) => setNumDraft({ ...numDraft, [m]: e.target.value })}
-                    maxLength={20}
-                    className="mt-1 w-full rounded-xl border border-border bg-secondary px-3 py-2 font-mono text-sm text-foreground"
-                  />
-                </label>
-              ))}
-            </div>
-            <label className="block text-xs font-bold text-foreground">
-              ইউজারদের জন্য নির্দেশনা / নোটিশ
-              <textarea
-                value={depNoticeDraft}
-                onChange={(e) => setDepNoticeDraft(e.target.value)}
-                rows={3}
-                maxLength={500}
-                className="mt-1 w-full rounded-xl border border-border bg-secondary px-3 py-2 text-sm text-foreground"
-              />
-            </label>
-            <button type="submit" className="bg-brand-gradient rounded-xl px-4 py-2 text-xs font-extrabold text-brand-foreground">
-              সেভ করুন
-            </button>
-          </form>
-        </Panel>
-
-        <Panel icon={<DollarSign className="size-4" />} title={`ডিপোজিট ও বুস্ট রিকোয়েস্ট (৳১ = ${bn(COINS_PER_TAKA)} কয়েন)`} tone="success">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-xs">
-              <thead className="text-muted-foreground">
-                <tr>
-                  <th className="py-2">User Name</th>
-                  <th>Type</th>
-                  <th>Amount</th>
-                  <th>Method</th>
-                  <th>TrxID</th>
-                  <th>Status</th>
-                  <th className="text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="text-foreground">
-                {pay.deposits.length === 0 && (
-                  <tr><td colSpan={7} className="py-4 text-center text-muted-foreground">কোনো রিকোয়েস্ট নেই।</td></tr>
-                )}
-                {pay.deposits.map((d) => (
-                  <tr key={d.id} className="border-t border-border">
-                    <td className="py-2 font-bold">{d.user}</td>
-                    <td>
-                      {d.kind === "boost" ? (
-                        <span title={d.videoUrl}>🚀 {BOOST_PACKS[d.pack ?? "silver"].label}</span>
-                      ) : (
-                        <span>🪙 {bn(d.amount * COINS_PER_TAKA)} কয়েন</span>
-                      )}
-                    </td>
-                    <td className="font-bold text-coin">{taka(d.amount)}</td>
-                    <td>{d.method}</td>
-                    <td className="font-mono">{d.trxId}</td>
-                    <td><StatusPill status={d.status} /></td>
-                    <td>
-                      <div className="flex justify-end gap-1.5">
-                        {d.status === "pending" ? (
-                          <>
-                            <button
-                              onClick={() => { setDepositStatus(d.id, "approved"); notify("রিকোয়েস্ট Accept করা হয়েছে।"); }}
-                              className="flex items-center gap-1 rounded-lg bg-success px-2.5 py-1 text-[10px] font-bold text-success-foreground"
-                            >
-                              <CheckCircle2 className="size-3" /> Accept
-                            </button>
-                            <button
-                              onClick={() => { setDepositStatus(d.id, "rejected"); notify("রিকোয়েস্ট বাতিল করা হয়েছে।"); }}
-                              className="flex items-center gap-1 rounded-lg bg-destructive px-2.5 py-1 text-[10px] font-bold text-destructive-foreground"
-                            >
-                              <XCircle className="size-3" /> Reject
-                            </button>
-                          </>
-                        ) : (
-                          <span className="text-[10px] font-semibold text-muted-foreground">
-                            {d.status === "approved" ? "যোগ করা হয়েছে" : "বাতিল"}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </Panel>
       </div>
 
       {toast && (
         <div className="fixed inset-x-0 bottom-6 z-50 flex justify-center px-6">
-          <p className="bg-brand-gradient rounded-full px-4 py-2 text-xs font-bold text-brand-foreground shadow-xl">
-            {toast}
-          </p>
+          <p className="bg-brand-gradient rounded-full px-4 py-2 text-xs font-bold text-brand-foreground shadow-xl">{toast}</p>
         </div>
       )}
     </div>
+  );
+}
+
+function UserRow({
+  user,
+  penalties,
+  onBlock,
+  onFine,
+}: {
+  user: AdminData["profiles"][number];
+  penalties: AdminData["penalties"];
+  onBlock: (blocked: boolean, reason: string) => void;
+  onFine: (amount: number, reason: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [fine, setFine] = useState("");
+  const vip = user.vip_until && Date.parse(user.vip_until) > Date.now();
+  const balance = user.points / POINTS_PER_TAKA;
+
+  return (
+    <li className={`rounded-xl border px-3 py-2.5 ${user.blocked ? "border-destructive/40 bg-destructive/10" : "border-border bg-secondary"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0 text-xs">
+          <p className="font-extrabold">
+            {user.username} {vip && <span className="text-coin">👑 VIP</span>} {user.blocked && <span className="text-destructive">⛔ ব্লক</span>}
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            🪙 {bn(user.coins)} কয়েন · <span className={balance < 0 ? "text-destructive" : ""}>৳{bn(balance.toFixed(2))}</span> · কোড {user.referral_code} · রেফার {bn(user.referrals)}
+          </p>
+        </div>
+        <button onClick={() => setOpen(!open)} className="rounded-lg border border-border bg-card px-2.5 py-1 text-[10px] font-bold">
+          {open ? "বন্ধ" : "অ্যাকশন"}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-3 space-y-2">
+          <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="কারণ (কোন নিয়ম ভেঙেছে)" className={field} />
+          <div className="flex flex-wrap gap-2">
+            {user.blocked ? (
+              <button onClick={() => onBlock(false, "")} className="flex items-center gap-1 rounded-lg bg-success px-3 py-1.5 text-[10px] font-bold text-success-foreground">
+                <CheckCircle2 className="size-3" /> আনব্লক
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  if (!reason.trim()) return;
+                  onBlock(true, reason.trim());
+                }}
+                disabled={!reason.trim()}
+                className="flex items-center gap-1 rounded-lg bg-destructive px-3 py-1.5 text-[10px] font-bold text-destructive-foreground disabled:opacity-40"
+              >
+                <Ban className="size-3" /> আইডি ব্লক
+              </button>
+            )}
+            <input value={fine} onChange={(e) => setFine(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="জরিমানা ৳" className="w-24 rounded-xl border border-input bg-secondary px-3 py-1.5 text-xs" />
+            <button
+              onClick={() => {
+                const amt = Number(fine);
+                if (!amt || !reason.trim()) return;
+                onFine(amt, reason.trim());
+                setFine("");
+              }}
+              disabled={!Number(fine) || !reason.trim()}
+              className="flex items-center gap-1 rounded-lg bg-warning px-3 py-1.5 text-[10px] font-bold text-warning-foreground disabled:opacity-40"
+            >
+              <Gavel className="size-3" /> জরিমানা করুন
+            </button>
+          </div>
+          {user.blocked && user.block_reason && <p className="text-[10px] text-destructive">ব্লকের কারণ: {user.block_reason}</p>}
+          {penalties.map((p) => (
+            <p key={p.id} className="text-[10px] text-muted-foreground">⚖️ -৳{bn(p.amount)} · {p.reason}</p>
+          ))}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -693,22 +566,10 @@ const PANEL_TONE: Record<PanelTone, string> = {
   warning: "text-warning",
 };
 
-function Panel({
-  icon,
-  title,
-  tone,
-  children,
-}: {
-  icon: ReactNode;
-  title: string;
-  tone: PanelTone;
-  children: ReactNode;
-}) {
+function Panel({ icon, title, tone, children }: { icon: ReactNode; title: string; tone: PanelTone; children: ReactNode }) {
   return (
-    <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
-      <h3
-        className={`flex items-center gap-2 text-sm font-extrabold ${PANEL_TONE[tone]}`}
-      >
+    <section className="space-y-3 rounded-2xl border border-border bg-card p-5">
+      <h3 className={`flex items-center gap-2 text-sm font-extrabold ${PANEL_TONE[tone]}`}>
         <span className="shrink-0">{icon}</span>
         {title}
       </h3>
@@ -717,51 +578,25 @@ function Panel({
   );
 }
 
-function StatCard({
-  icon,
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  hint: string;
-  tone: PanelTone;
-}) {
+function StatCard({ icon, label, value, hint, tone }: { icon: ReactNode; label: string; value: string; hint: string; tone: PanelTone }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-4">
       <p className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
         <span className={`shrink-0 ${PANEL_TONE[tone]}`}>{icon}</span>
         {label}
       </p>
-      <p className="mt-2 truncate text-xl font-extrabold text-foreground">
-        {value}
-      </p>
-      <p className="mt-1 text-[11px] font-medium text-muted-foreground">
-        {hint}
-      </p>
+      <p className="mt-2 truncate text-xl font-extrabold text-foreground">{value}</p>
+      <p className="mt-1 text-[11px] font-medium text-muted-foreground">{hint}</p>
     </div>
   );
 }
 
-function StatusPill({ status }: { status: WithdrawRequest["status"] }) {
-  const styles: Record<WithdrawRequest["status"], string> = {
+function StatusPill({ status }: { status: Status }) {
+  const styles: Record<Status, string> = {
     pending: "border-warning/30 bg-warning/15 text-warning",
     approved: "border-success/30 bg-success/15 text-success",
     rejected: "border-destructive/30 bg-destructive/15 text-destructive",
   };
-  const labels: Record<WithdrawRequest["status"], string> = {
-    pending: "Pending",
-    approved: "Approved",
-    rejected: "Rejected",
-  };
-  return (
-    <span
-      className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${styles[status]}`}
-    >
-      {labels[status]}
-    </span>
-  );
+  const labels: Record<Status, string> = { pending: "Pending", approved: "Approved", rejected: "Rejected" };
+  return <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${styles[status]}`}>{labels[status] ?? status}</span>;
 }

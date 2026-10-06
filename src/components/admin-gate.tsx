@@ -1,25 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Lock, ShieldCheck } from "lucide-react";
 
 import { AdminPanel } from "@/components/admin-panel";
+import { adminLogin } from "@/lib/admin.functions";
 
-const ADMIN_PASSWORD = "k.h.a.l.e.k";
-const SESSION_KEY = "watchcoin.admin";
+const SESSION_KEY = "watchcoin.admin.pw";
 
-function readSession(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.sessionStorage.getItem(SESSION_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-/** Password-gated admin area, reachable only through the #admin hash. */
+/** Password-gated admin area, reachable only through the #admin hash. The password is checked on the server. */
 export function AdminGate({ onExit }: { onExit: () => void }) {
-  const [authed, setAuthed] = useState(readSession);
+  const [authed, setAuthed] = useState<string | null>(null);
   const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = window.sessionStorage.getItem(SESSION_KEY);
+      if (saved) setAuthed(saved);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const logout = () => {
     try {
@@ -27,26 +28,29 @@ export function AdminGate({ onExit }: { onExit: () => void }) {
     } catch {
       // ignore
     }
-    setAuthed(false);
+    setAuthed(null);
     setPassword("");
   };
 
   if (authed) {
-    return <AdminPanel onExit={onExit} onLogout={logout} />;
+    return <AdminPanel password={authed} onExit={onExit} onLogout={logout} />;
   }
 
   return (
     <main className="grid min-h-screen place-items-center bg-background px-5 py-10 font-sans text-foreground">
       <form
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
-          if (password === ADMIN_PASSWORD) {
+          setBusy(true);
+          const res = await adminLogin({ data: { password: password || "-" } });
+          setBusy(false);
+          if (res.ok) {
             try {
-              window.sessionStorage.setItem(SESSION_KEY, "1");
+              window.sessionStorage.setItem(SESSION_KEY, password);
             } catch {
               // ignore
             }
-            setAuthed(true);
+            setAuthed(password);
             setError(null);
           } else {
             setError("ভুল পাসওয়ার্ড। আবার চেষ্টা করুন।");
@@ -59,12 +63,8 @@ export function AdminGate({ onExit }: { onExit: () => void }) {
             <Lock className="size-5 text-brand-foreground" />
           </span>
           <div>
-            <h1 className="text-base font-extrabold text-card-foreground">
-              এডমিন লগইন
-            </h1>
-            <p className="text-[11px] font-semibold text-muted-foreground">
-              শুধুমাত্র অনুমোদিত এডমিনের জন্য
-            </p>
+            <h1 className="text-base font-extrabold text-card-foreground">এডমিন লগইন</h1>
+            <p className="text-[11px] font-semibold text-muted-foreground">শুধুমাত্র অনুমোদিত এডমিনের জন্য</p>
           </div>
         </div>
 
@@ -81,13 +81,12 @@ export function AdminGate({ onExit }: { onExit: () => void }) {
           />
         </label>
 
-        {error && (
-          <p className="text-xs font-bold text-destructive">{error}</p>
-        )}
+        {error && <p className="text-xs font-bold text-destructive">{error}</p>}
 
         <button
           type="submit"
-          className="bg-brand-gradient w-full rounded-xl py-3 text-sm font-extrabold text-brand-foreground shadow-lg transition-transform active:scale-[0.98]"
+          disabled={busy}
+          className="bg-brand-gradient w-full rounded-xl py-3 text-sm font-extrabold text-brand-foreground shadow-lg transition-transform active:scale-[0.98] disabled:opacity-50"
         >
           লগইন করুন
         </button>

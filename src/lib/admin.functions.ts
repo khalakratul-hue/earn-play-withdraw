@@ -81,7 +81,7 @@ export const adminSaveSettings = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await checkPassword(data.password);
     const db = await admin();
-    const patch = Object.fromEntries(Object.entries(data.patch).filter(([, v]) => v !== undefined));
+    const patch = Object.fromEntries(Object.entries(data.patch).filter(([, v]) => v !== undefined)) as Record<string, never>;
     const { error } = await db.from("app_settings").update(patch).eq("id", 1);
     if (error) throw new Error(error.message);
     return { ok: true };
